@@ -205,9 +205,13 @@ object HostsSync {
                 // aborts it the moment its engine stops, so this is known
                 // for certain — not guessed from whether the new engine is
                 // up yet, which a 20 s timeout would long have outlived.
-                Log.i(TAG, "sync from ${cfg.from} interrupted by a node restart; retrying shortly")
                 setStatus(app, status(app).copy(running = false))
-                if (FipsVpnService.tunnelActive) schedule(app, BUSY_RETRY_MS)
+                if (FipsVpnService.tunnelActive) {
+                    Log.i(TAG, "sync from ${cfg.from} interrupted by a node restart; retrying shortly")
+                    schedule(app, BUSY_RETRY_MS)
+                } else {
+                    Log.i(TAG, "sync from ${cfg.from} stopped by a disconnect; resumes on the next connect")
+                }
                 return
             }
             val offline = e is SyncError && e.offline
