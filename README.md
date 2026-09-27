@@ -36,7 +36,10 @@ usable on a device you also use for everything else.
   `home.fips` instead of `npub1k3ae….fips` — for every mesh app, like a hosts
   file (it *is* one: fips's `name npub` format). Names are local to the
   device, and adding or re-pointing one applies to the next lookup; the mesh
-  does not reconnect.
+  does not reconnect. Optionally they can also be pulled from a node you run
+  with [fips-ui](https://github.com/fr34aky/fips-ui) — the same sync its own
+  nodes use: hourly and on demand, over the mesh, with that node admitting
+  this device by its npub as a viewer.
 - **Default-deny inbound firewall.** Any authorized node on the mesh can
   otherwise reach any port your selected apps listen on, as if you had joined
   a shared LAN. Only replies to connections the phone opened, ICMPv6, and an

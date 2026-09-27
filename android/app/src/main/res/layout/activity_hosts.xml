@@ -29,7 +29,7 @@
             <TextView
                 style="@style/Widget.Fips.Summary"
                 android:layout_marginTop="0dp"
-                android:text="Give a node a name and your mesh apps can use home.fips instead of its npub1….fips address. Names live on this device only — they are your address book, not something other nodes see." />
+                android:text="Give a node a name and your mesh apps can use home.fips instead of its npub1….fips address. Names live on this device only — they are your address book, not something other nodes see. They can also be pulled from a node you run with fips-ui (below)." />
 
             <!-- Add / re-point -->
             <com.google.android.material.textfield.TextInputLayout
@@ -97,6 +97,156 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:paddingVertical="4dp" />
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Names pulled from a node running fips-ui (HostsSync). -->
+            <TextView
+                style="@style/SettingsHeader"
+                android:text="Sync from another node" />
+
+            <com.google.android.material.card.MaterialCardView style="@style/Widget.Fips.Card">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/sync_enabled"
+                        style="@style/Widget.Fips.SettingSwitch"
+                        android:text="Sync names from a fips-ui node" />
+
+                    <TextView
+                        style="@style/Widget.Fips.Summary"
+                        android:text="Optional. Needs a node you run with fips-ui: on it, enable Access → Web UI over the mesh and add this device's npub as a viewer. Its names are then pulled over the mesh every hour (and on Sync now) while fips2go is connected. Your own names stay; a synced name wins over one of yours with the same name." />
+
+                    <LinearLayout
+                        android:id="@+id/sync_fields"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/sync_from_layout"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:hint="Sync from (npub1… or one of your names)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/sync_from"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="monospace"
+                                android:imeOptions="actionNext"
+                                android:inputType="textUri|textNoSuggestions"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:orientation="horizontal">
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/sync_port_layout"
+                                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginEnd="8dp"
+                                android:layout_weight="1"
+                                android:hint="UI port">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/sync_port"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:imeOptions="actionNext"
+                                    android:inputType="number"
+                                    android:maxLines="1" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/sync_interval_layout"
+                                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:hint="Every (minutes)">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/sync_interval"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:imeOptions="actionDone"
+                                    android:inputType="number"
+                                    android:maxLines="1" />
+                            </com.google.android.material.textfield.TextInputLayout>
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/sync_status"
+                        style="@style/Widget.Fips.Summary"
+                        android:layout_marginTop="8dp"
+                        android:textIsSelectable="true" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:gravity="end"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/sync_now"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="8dp"
+                            android:text="Sync now" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/sync_save"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Save" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <TextView
+                android:id="@+id/synced_header"
+                style="@style/SettingsHeader"
+                android:text="Synced names" />
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/synced_list_card"
+                style="@style/Widget.Fips.Card">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingVertical="4dp">
+
+                    <LinearLayout
+                        android:id="@+id/synced_list"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/synced_show_all"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_horizontal" />
+                </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>

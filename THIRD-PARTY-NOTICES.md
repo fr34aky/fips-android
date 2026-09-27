@@ -44,10 +44,12 @@ crates.io per MPL §3.2(b).
 | bech32 | 0.12.0 | MIT |
 | bitcoin-io | 0.1.101 | CC0-1.0 |
 | bitcoin_hashes | 0.14.101 | CC0-1.0 |
+| bitflags | 1.3.2 | MIT/Apache-2.0 |
 | bitflags | 2.13.1 | MIT OR Apache-2.0 |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 |
 | block-padding | 0.3.3 | MIT OR Apache-2.0 |
+| byteorder | 1.5.0 | Unlicense OR MIT |
 | bytes | 1.12.1 | MIT |
 | castaway | 0.2.4 | MIT |
 | cesu8 | 1.1.0 | Apache-2.0/MIT |
@@ -102,8 +104,10 @@ crates.io per MPL §3.2(b).
 | getrandom | 0.2.17 | MIT OR Apache-2.0 |
 | getrandom | 0.3.4 | MIT OR Apache-2.0 |
 | getrandom | 0.4.3 | MIT OR Apache-2.0 |
+| hash32 | 0.3.1 | MIT OR Apache-2.0 |
 | hashbrown | 0.16.1 | MIT OR Apache-2.0 |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 |
+| heapless | 0.9.3 | MIT OR Apache-2.0 |
 | heck | 0.5.0 | MIT OR Apache-2.0 |
 | hex | 0.4.3 | MIT OR Apache-2.0 |
 | hex-conservative | 0.2.2 | CC0-1.0 |
@@ -144,6 +148,7 @@ crates.io per MPL §3.2(b).
 | log | 0.4.33 | MIT OR Apache-2.0 |
 | lru | 0.16.4 | MIT |
 | lru | 0.18.2 | MIT |
+| managed | 0.8.0 | 0BSD |
 | matchers | 0.2.0 | MIT |
 | mdns-sd | 0.20.3 | Apache-2.0 OR MIT |
 | memchr | 2.8.3 | Unlicense OR MIT |
@@ -208,6 +213,7 @@ crates.io per MPL §3.2(b).
 | simple-dns | 0.11.3 | MIT |
 | slab | 0.4.12 | MIT |
 | smallvec | 1.15.2 | MIT OR Apache-2.0 |
+| smoltcp | 0.14.0 | 0BSD |
 | socket-pktinfo | 0.4.1 | MIT |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 |
 | spin | 0.9.9 | MIT |

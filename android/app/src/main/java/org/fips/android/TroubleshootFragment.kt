@@ -131,7 +131,7 @@ class TroubleshootFragment : Fragment() {
     /** The probe field also takes a mesh name (`home` / `home.fips`). */
     private fun probeTarget(typed: String): String {
         val name = HostsStore.normalizeName(typed)
-        return HostsStore.load(requireContext()).firstOrNull { it.name == name }?.npub
+        return HostsStore.effective(requireContext()).firstOrNull { it.name == name }?.npub
             ?: typed.trim()
     }
 

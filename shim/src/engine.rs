@@ -103,6 +103,9 @@ struct Engine {
     /// Empty while Nostr is disabled.
     relay_status: Arc<Mutex<Vec<fips::nostr::RelayStatusView>>>,
     relay_refresh: Arc<tokio::sync::Notify>,
+    /// What [`mesh_http_get_json`] borrows to speak TCP over the mesh from
+    /// inside the process (the Mesh names sync).
+    mesh: Arc<crate::meshhttp::MeshLink>,
 }
 
 /// What `start()` reports back to Kotlin.
@@ -310,12 +313,23 @@ fn start_inner(
         None
     };
 
+    let divert = Arc::new(crate::meshhttp::Divert::default());
+    let mesh = Arc::new(crate::meshhttp::MeshLink {
+        our_addr: our_fips_addr.to_ipv6(),
+        processor: processor.clone(),
+        outbound_tx: outbound_tx.clone(),
+        divert: divert.clone(),
+        responder: LOCAL_RESPONDER.parse().unwrap(),
+        running: running.clone(),
+    });
+
     let pump = Pump::spawn(PumpConfig {
         tun_fd: owned_fd,
         running: running.clone(),
         processor,
         outbound_tx,
         inbound_rx,
+        divert,
         filter,
         dns_addr: DNS_SENTINEL,
         dns,
@@ -345,6 +359,7 @@ fn start_inner(
         netmon,
         relay_status,
         relay_refresh,
+        mesh,
     };
     Ok((engine, StartInfo { npub, address }))
 }
@@ -521,6 +536,61 @@ pub fn connect_peer_json(npub: &str, address: &str) -> String {
     match handle.command_blocking("connect", Some(params)) {
         Ok(response) => response.to_string(),
         Err(e) => serde_json::json!({ "status": "error", "message": e }).to_string(),
+    }
+}
+
+/// `GET http://[<npub's address>]:<port><path>` over the mesh, from inside
+/// the process (see [`crate::meshhttp`]). Blocking — call off the UI thread;
+/// the `ENGINE` lock is not held while fetching. `headers_json` is an object
+/// of extra request headers. Answers `{"status": <code>, "body": "<text>"}`
+/// or `{"error": "...", "unreachable": <bool>, "restarted": <bool>}` —
+/// `unreachable` meaning the node could not be reached at all, as opposed to
+/// answering badly; `restarted` that this engine stopped or was rebuilt
+/// under the request (a rebind), which says nothing about the far node.
+pub fn mesh_http_get_json(
+    npub: &str,
+    port: u16,
+    path: &str,
+    headers_json: &str,
+    timeout: Duration,
+) -> String {
+    let error = |message: String, unreachable: bool| {
+        serde_json::json!({ "error": message, "unreachable": unreachable }).to_string()
+    };
+    let Some(link) = ENGINE.lock().unwrap().as_ref().map(|e| e.mesh.clone()) else {
+        return error("not connected".into(), false);
+    };
+    let (npub, address) = match crate::config::resolve_npub(npub) {
+        Ok(v) => v,
+        Err(e) => return error(e, false),
+    };
+    let Ok(addr) = address.parse() else {
+        return error(format!("bad mesh address {address}"), false);
+    };
+    if port == 0 || !path.starts_with('/') {
+        return error("bad port or path".into(), false);
+    }
+    let headers_json = if headers_json.trim().is_empty() { "{}" } else { headers_json };
+    let headers: Vec<(String, String)> =
+        match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(headers_json) {
+            Ok(map) => map
+                .into_iter()
+                .filter_map(|(k, v)| v.as_str().map(|v| (k, v.to_string())))
+                .collect(),
+            Err(e) => return error(format!("bad headers: {e}"), false),
+        };
+    match crate::meshhttp::get(&link, &npub, addr, port, path, &headers, timeout) {
+        Ok(r) => serde_json::json!({
+            "status": r.status,
+            "body": String::from_utf8_lossy(&r.body),
+        })
+        .to_string(),
+        Err(e) => serde_json::json!({
+            "error": e.message,
+            "unreachable": e.unreachable,
+            "restarted": e.restarted,
+        })
+        .to_string(),
     }
 }
 

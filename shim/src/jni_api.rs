@@ -212,6 +212,32 @@ pub extern "system" fn Java_org_fips_android_FipsNative_connectPeer(
     to_jstring(&env, &json)
 }
 
+/// `meshHttpGet(npub, port, path, headersJson, timeoutMs)` → see
+/// [`crate::engine::mesh_http_get_json`]. Blocking; call off the main thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_fips_android_FipsNative_meshHttpGet(
+    mut env: JNIEnv,
+    _class: JClass,
+    npub: JString,
+    port: jint,
+    path: JString,
+    headers_json: JString,
+    timeout_ms: jint,
+) -> jstring {
+    let npub = from_jstring(&mut env, &npub);
+    let path = from_jstring(&mut env, &path);
+    let headers = from_jstring(&mut env, &headers_json);
+    let port = u16::try_from(port).unwrap_or(0);
+    let timeout = std::time::Duration::from_millis(timeout_ms.clamp(1000, 120_000) as u64);
+    let json = std::panic::catch_unwind(|| {
+        crate::engine::mesh_http_get_json(&npub, port, &path, &headers, timeout)
+    })
+    .unwrap_or_else(|_| {
+        serde_json::json!({ "error": "panic in meshHttpGet", "unreachable": false }).to_string()
+    });
+    to_jstring(&env, &json)
+}
+
 /// `query(command, paramsJson)` → any snapshot-served `show_*` result.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_fips_android_FipsNative_query(

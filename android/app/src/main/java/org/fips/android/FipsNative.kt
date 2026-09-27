@@ -75,6 +75,19 @@ object FipsNative {
     /** Resolve an npub to its `.fips` address. JSON `{npub,address}` or `{error}`. */
     external fun resolveNpub(npub: String): String
 
+    /**
+     * `GET http://[<npub's mesh address>]:<port><path>` over the mesh, made
+     * inside the shim (this app's own sockets are outside its tunnel).
+     * [headersJson] is an object of extra request headers. Returns
+     * `{"status": <code>, "body": "<text>"}` or `{"error": "...",
+     * "unreachable": <bool>, "restarted": <bool>}` (`restarted`: the engine
+     * stopped or was rebuilt under the request). Blocking (up to [timeoutMs]) — call off the
+     * main thread. Used by [HostsSync].
+     */
+    external fun meshHttpGet(
+        npub: String, port: Int, path: String, headersJson: String, timeoutMs: Int,
+    ): String
+
     /** The most recent node log lines (newline-joined). */
     external fun recentLogs(maxLines: Int): String
 }
