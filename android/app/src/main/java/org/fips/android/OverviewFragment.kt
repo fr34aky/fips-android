@@ -343,7 +343,7 @@ class OverviewFragment : Fragment() {
     }
 
     private fun updateMeshNames() {
-        val names = HostsStore.load(requireContext()).map { "${it.name}.fips" }
+        val names = HostsStore.effective(requireContext()).map { "${it.name}.fips" }
         view?.findViewById<TextView>(R.id.mesh_names_summary)?.text = when {
             names.isEmpty() -> "Name a node — use home.fips instead of its npub1….fips address."
             names.size <= MAX_MESH_NAMES_SHOWN -> names.joinToString(", ")

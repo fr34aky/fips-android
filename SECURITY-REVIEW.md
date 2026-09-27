@@ -28,6 +28,17 @@ Everything crosses JNI as JSON strings.
 4. **GitHub release metadata and the downloaded APK** in
    `android/.../Updater.kt`.
 5. **Nostr relay traffic**, handled inside the fips dependency rather than here.
+6. **The Mesh names sync answer** (opt-in, off by default): the upstream
+   node's `/api/hosts` JSON, fetched over the mesh by the in-process TCP client
+   in `shim/src/meshhttp.rs` and parsed in `android/.../HostsSync.kt`. Only the
+   npub the user named can answer from its address, so the source is
+   authentic — but it is still a remote party writing names into this
+   device's `.fips` resolution (a synced name overrides a local one by design,
+   as in fips-ui). The HTTP parsing is bounded (4 MiB body, chunked decoding
+   checked), entries are validated like hand-typed ones and capped at 2000.
+   The reply tap (`Divert`) sits in front of the inbound firewall, but only
+   claims packets matching an open in-process flow's exact (remote address,
+   remote port, local port) — it cannot admit anything to a covered app.
 
 ## Things that would be serious in this codebase
 

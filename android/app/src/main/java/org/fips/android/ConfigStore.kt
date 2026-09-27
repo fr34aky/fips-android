@@ -59,6 +59,16 @@ object ConfigStore {
      */
     const val NOSTR_RELAYS = "relay_list"
 
+    /**
+     * Mesh names sync ([HostsSync]): pull the name list of a node running
+     * fips-ui into the hosts file. App-side only; off unless configured —
+     * it needs a node the user controls, so there is nothing to seed.
+     */
+    const val HOSTS_SYNC = "hosts_sync_enabled"
+    const val HOSTS_SYNC_FROM = "hosts_sync_from"
+    const val HOSTS_SYNC_PORT = "hosts_sync_port"
+    const val HOSTS_SYNC_INTERVAL = "hosts_sync_interval_min"
+
     /** App-side only (not part of the shim config JSON). */
     const val AUTO_UPDATE = "auto_update_check"
 
@@ -90,6 +100,15 @@ object ConfigStore {
     const val DEF_LOG_LEVEL = "info"
     const val DEF_BOOTSTRAP_FALLBACKS = true
     const val DEF_NOSTR_DISCOVERY = false
+    const val DEF_HOSTS_SYNC = false
+    /** fips-ui's default "Web UI over the mesh" port. */
+    const val DEF_HOSTS_SYNC_PORT = 8321
+    /**
+     * Hourly. fips-ui's own default is 5 minutes, but a phone pays for every
+     * wake-up in battery and a name list changes rarely; "Sync now" is there
+     * for an edit that should arrive at once.
+     */
+    const val DEF_HOSTS_SYNC_INTERVAL_MIN = 60
 
     /**
      * Ceiling on links found by Nostr discovery, sent to the shim as

@@ -386,6 +386,7 @@ class FipsVpnService : VpnService() {
             Log.i(TAG, "fips engine running, address $address, ipv6Clearnet=$wantIpv6")
             registerNetworkMonitoring()
             startHotspot()
+            HostsSync.onConnected(this)
             if (rebindAfterConnect.getAndSet(false)) rebindNode()
         }
     }
@@ -1097,6 +1098,7 @@ class FipsVpnService : VpnService() {
         rebindAfterConnect.set(false)
         // One teardown at a time; a second request is served by the first.
         if (!stopping.compareAndSet(false, true)) return
+        HostsSync.onDisconnected()
         stopHotspot()
         unregisterNetworkMonitoring()
         releaseMulticastLock()
@@ -1134,6 +1136,7 @@ class FipsVpnService : VpnService() {
 
     override fun onDestroy() {
         tunnelActive = false
+        HostsSync.onDisconnected()
         stopHotspot()
         unregisterNetworkMonitoring()
         releaseMulticastLock()

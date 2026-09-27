@@ -13,7 +13,8 @@
 //!   Woken by an empty-`Vec` sentinel (no real packet is empty: DNS replies,
 //!   forwarder output, and mesh packets are all ≥ 40 bytes).
 //! - **bridge** — forwards mesh→app packets from the node's inbound receiver
-//!   into `writer_rx`, so the writer is the fd's only writer. Ends when the
+//!   into `writer_rx`, so the writer is the fd's only writer (replies to the
+//!   shim's own mesh flows are diverted to them instead). Ends when the
 //!   node drops its inbound sender during drain.
 
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -56,6 +57,9 @@ pub struct PumpConfig {
     pub outbound_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
     /// mesh → app (fed by the node).
     pub inbound_rx: Receiver<Vec<u8>>,
+    /// Replies to the shim's own in-process mesh flows ([`crate::meshhttp`]),
+    /// taken out before the firewall and the TUN.
+    pub divert: Arc<crate::meshhttp::Divert>,
     /// Stateful inbound firewall for the mesh→app direction (`None` = off).
     /// The reader feeds it outbound flows; the bridge asks it for verdicts.
     pub filter: Option<Arc<crate::filter::InboundFilter>>,
@@ -81,6 +85,7 @@ impl Pump {
             processor,
             outbound_tx,
             inbound_rx,
+            divert,
             filter,
             dns_addr,
             dns,
@@ -146,6 +151,9 @@ impl Pump {
                         while running.load(Ordering::Relaxed) {
                             match inbound_rx.recv() {
                                 Ok(pkt) => {
+                                    let Some(pkt) = divert.claim(pkt) else {
+                                        continue; // an in-process flow's reply
+                                    };
                                     if let Some(f) = filter.as_deref()
                                         && !f.allow_inbound(&pkt)
                                     {
