@@ -17,7 +17,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasher, Hasher};
 use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -51,6 +51,11 @@ pub struct MeshLink {
     /// The in-process `.fips` responder: asking it for `<npub>.fips` is what
     /// registers the destination's identity with the node.
     pub responder: SocketAddr,
+    /// The engine's `running` flag. A rebind replaces the whole engine, and
+    /// a request still holding this link would otherwise sit out its full
+    /// timeout (the replies now reach the new engine's divert) and report
+    /// the node as unreachable.
+    pub running: Arc<AtomicBool>,
 }
 
 /// (remote address, remote port, local port) of an in-process TCP flow.
@@ -164,10 +169,13 @@ fn random_u64() -> u64 {
 /// Failure of a request. `unreachable` marks the cases where the node could
 /// not be reached at all (no route, nothing listening, timeout) as opposed
 /// to one that answered badly — the caller backs off differently.
+/// `restarted`: the engine stopped or was rebuilt under the request — says
+/// nothing about the far node; worth a prompt retry.
 #[derive(Debug)]
 pub struct FetchError {
     pub message: String,
     pub unreachable: bool,
+    pub restarted: bool,
 }
 
 impl FetchError {
@@ -175,12 +183,21 @@ impl FetchError {
         Self {
             message: message.into(),
             unreachable: false,
+            restarted: false,
         }
     }
     fn unreachable(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             unreachable: true,
+            restarted: false,
+        }
+    }
+    fn restarted() -> Self {
+        Self {
+            message: "the node restarted during the request".into(),
+            unreachable: false,
+            restarted: true,
         }
     }
 }
@@ -217,7 +234,7 @@ pub fn get(
         match processor.process(&mut packet) {
             TunPacketAction::Forward => outbound
                 .blocking_send(packet)
-                .map_err(|_| FetchError::other("the node stopped")),
+                .map_err(|_| FetchError::restarted()),
             TunPacketAction::Hairpin => Err(FetchError::other("that is this node's own address")),
             TunPacketAction::Respond(_) => Err(FetchError::unreachable(format!(
                 "the node refused to send to {addr}"
@@ -233,6 +250,7 @@ pub fn get(
         (addr, port),
         &request,
         Instant::now() + timeout,
+        &link.running,
     )
 }
 
@@ -357,6 +375,7 @@ fn exchange<E: FnMut(Vec<u8>) -> Result<(), FetchError>>(
     remote: (Ipv6Addr, u16),
     request: &[u8],
     deadline: Instant,
+    alive: &AtomicBool,
 ) -> Result<Response, FetchError> {
     let start = Instant::now();
     let now = || smoltcp::time::Instant::from_millis(start.elapsed().as_millis() as i64);
@@ -396,6 +415,9 @@ fn exchange<E: FnMut(Vec<u8>) -> Result<(), FetchError>>(
 
     let finish = |data: &[u8]| parse_response(data).map_err(FetchError::other);
     loop {
+        if !alive.load(Ordering::Relaxed) {
+            return Err(FetchError::restarted());
+        }
         iface.poll(now(), &mut device, &mut sockets);
         if let Some(e) = device.failed.take() {
             return Err(e);
@@ -466,9 +488,7 @@ fn exchange<E: FnMut(Vec<u8>) -> Result<(), FetchError>>(
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err(FetchError::other("the node stopped"));
-            }
+            Err(RecvTimeoutError::Disconnected) => return Err(FetchError::restarted()),
         }
         if unreachable >= UNREACHABLE_LIMIT && !established {
             return Err(FetchError::unreachable(format!(
@@ -694,6 +714,7 @@ mod tests {
             (server_addr, 8321),
             &request,
             Instant::now() + Duration::from_secs(10),
+            &AtomicBool::new(true),
         )
         .unwrap();
         assert_eq!(response.status, 200);
@@ -718,8 +739,35 @@ mod tests {
             ("fd00::2".parse().unwrap(), 8321),
             b"GET / HTTP/1.1\r\n\r\n",
             Instant::now() + Duration::from_millis(300),
+            &AtomicBool::new(true),
         )
         .unwrap_err();
         assert!(err.unreachable, "{err:?}");
+    }
+
+    /// The engine stopped under the request (a rebind): given up at once
+    /// and reported as a restart, never as the far node being unreachable.
+    #[test]
+    fn engine_stop_is_a_restart_not_unreachable() {
+        let (_tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let alive = Arc::new(AtomicBool::new(true));
+        let flag = alive.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            flag.store(false, Ordering::Relaxed);
+        });
+        let started = Instant::now();
+        let err = exchange(
+            |_| Ok(()),
+            &rx,
+            ("fd00::1".parse().unwrap(), 61000),
+            ("fd00::2".parse().unwrap(), 8321),
+            b"GET / HTTP/1.1\r\n\r\n",
+            Instant::now() + Duration::from_secs(10),
+            &alive,
+        )
+        .unwrap_err();
+        assert!(err.restarted && !err.unreachable, "{err:?}");
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 }

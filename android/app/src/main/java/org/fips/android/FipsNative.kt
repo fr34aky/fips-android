@@ -80,7 +80,8 @@ object FipsNative {
      * inside the shim (this app's own sockets are outside its tunnel).
      * [headersJson] is an object of extra request headers. Returns
      * `{"status": <code>, "body": "<text>"}` or `{"error": "...",
-     * "unreachable": <bool>}`. Blocking (up to [timeoutMs]) — call off the
+     * "unreachable": <bool>, "restarted": <bool>}` (`restarted`: the engine
+     * stopped or was rebuilt under the request). Blocking (up to [timeoutMs]) — call off the
      * main thread. Used by [HostsSync].
      */
     external fun meshHttpGet(

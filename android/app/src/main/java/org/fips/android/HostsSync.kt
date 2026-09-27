@@ -84,6 +84,9 @@ object HostsSync {
 
     private class SyncError(message: String, val offline: Boolean = false) : Exception(message)
 
+    /** The engine stopped or was rebuilt under the request: not an attempt. */
+    private class Restarted : Exception("the node restarted during the request")
+
     private val worker = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "fips-hosts-sync").apply { isDaemon = true }
     }
@@ -127,8 +130,16 @@ object HostsSync {
         schedule(app, 0)
     }
 
-    /** "Sync now": always tries at once, whatever the backoff. */
-    fun syncNow(context: Context) = schedule(context.applicationContext, 0)
+    /**
+     * "Sync now": tries at once, whatever the backoff. False when there is no
+     * tunnel to sync over — the caller says so; nothing is recorded, so no
+     * stale "not connected" outlives the next connect.
+     */
+    fun syncNow(context: Context): Boolean {
+        if (!FipsVpnService.tunnelActive) return false
+        schedule(context.applicationContext, 0)
+        return true
+    }
 
     /**
      * The engine is up (FipsVpnService): resume the schedule. Unlike fips-ui
@@ -165,9 +176,8 @@ object HostsSync {
         }
         if (!FipsNative.isRunning()) {
             // A rebind restarts the engine for a couple of seconds; that is
-            // not an attempt. Fully disconnected: the next connect retries.
+            // not an attempt. Fully disconnected: the next connect resumes.
             if (FipsVpnService.tunnelActive) schedule(app, BUSY_RETRY_MS)
-            else setStatus(app, status(app).copy(error = "Not connected — names sync while fips2go is connected"))
             return
         }
         val gen = generation
@@ -190,10 +200,14 @@ object HostsSync {
             Log.i(TAG, "synced ${hosts.size} names from ${cfg.from} (changed=$changed, skipped=$skipped)")
         } catch (e: Exception) {
             if (gen != generation) return
-            if (!FipsNative.isRunning() && FipsVpnService.tunnelActive) {
-                // The engine restarted under the request (a rebind).
+            if (e is Restarted) {
+                // A rebind (or a disconnect) under the request. The shim
+                // aborts it the moment its engine stops, so this is known
+                // for certain — not guessed from whether the new engine is
+                // up yet, which a 20 s timeout would long have outlived.
+                Log.i(TAG, "sync from ${cfg.from} interrupted by a node restart; retrying shortly")
                 setStatus(app, status(app).copy(running = false))
-                schedule(app, BUSY_RETRY_MS)
+                if (FipsVpnService.tunnelActive) schedule(app, BUSY_RETRY_MS)
                 return
             }
             val offline = e is SyncError && e.offline
@@ -209,7 +223,9 @@ object HostsSync {
             Log.i(TAG, "sync from ${cfg.from} failed: ${next.error}")
         }
         setStatus(app, next.copy(running = false))
-        schedule(app, next.nextAttempt - System.currentTimeMillis())
+        // A disconnect while this ran cancelled only what was pending; do not
+        // re-arm behind it — onConnected resumes the schedule.
+        if (FipsVpnService.tunnelActive) schedule(app, next.nextAttempt - System.currentTimeMillis())
     }
 
     private data class Fetched(
@@ -228,6 +244,7 @@ object HostsSync {
         val res = JSONObject(
             FipsNative.meshHttpGet(cfg.from, cfg.port, "/api/hosts", headers.toString(), TIMEOUT_MS)
         )
+        if (res.optBoolean("restarted")) throw Restarted()
         if (res.has("error")) {
             val unreachable = res.optBoolean("unreachable")
             throw SyncError(

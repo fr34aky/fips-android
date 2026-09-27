@@ -40,7 +40,9 @@ class HostsActivity : AppCompatActivity() {
         }
         findViewById<MaterialButton>(R.id.sync_save).setOnClickListener { saveSync() }
         findViewById<MaterialButton>(R.id.sync_now).setOnClickListener {
-            HostsSync.syncNow(this)
+            if (!HostsSync.syncNow(this)) {
+                Ui.snack(it, "Connect first — names sync while fips2go is connected")
+            }
         }
         findViewById<MaterialSwitch>(R.id.sync_enabled).setOnCheckedChangeListener { _, on ->
             findViewById<View>(R.id.sync_fields).visibility = if (on) View.VISIBLE else View.GONE
@@ -120,7 +122,8 @@ class HostsActivity : AppCompatActivity() {
         )
         Ui.snack(
             fromLayout,
-            if (enabled) "Saved — syncing" else if (HostsStore.loadSynced(this) != null) {
+            if (enabled && FipsVpnService.tunnelActive) "Saved — syncing"
+            else if (enabled) "Saved — syncs once fips2go is connected" else if (HostsStore.loadSynced(this) != null) {
                 "Sync off — synced names removed"
             } else "Sync off",
         )

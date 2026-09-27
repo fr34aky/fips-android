@@ -320,6 +320,7 @@ fn start_inner(
         outbound_tx: outbound_tx.clone(),
         divert: divert.clone(),
         responder: LOCAL_RESPONDER.parse().unwrap(),
+        running: running.clone(),
     });
 
     let pump = Pump::spawn(PumpConfig {
@@ -542,8 +543,10 @@ pub fn connect_peer_json(npub: &str, address: &str) -> String {
 /// the process (see [`crate::meshhttp`]). Blocking — call off the UI thread;
 /// the `ENGINE` lock is not held while fetching. `headers_json` is an object
 /// of extra request headers. Answers `{"status": <code>, "body": "<text>"}`
-/// or `{"error": "...", "unreachable": <bool>}` — `unreachable` meaning the
-/// node could not be reached at all, as opposed to answering badly.
+/// or `{"error": "...", "unreachable": <bool>, "restarted": <bool>}` —
+/// `unreachable` meaning the node could not be reached at all, as opposed to
+/// answering badly; `restarted` that this engine stopped or was rebuilt
+/// under the request (a rebind), which says nothing about the far node.
 pub fn mesh_http_get_json(
     npub: &str,
     port: u16,
@@ -582,7 +585,12 @@ pub fn mesh_http_get_json(
             "body": String::from_utf8_lossy(&r.body),
         })
         .to_string(),
-        Err(e) => error(e.message, e.unreachable),
+        Err(e) => serde_json::json!({
+            "error": e.message,
+            "unreachable": e.unreachable,
+            "restarted": e.restarted,
+        })
+        .to_string(),
     }
 }
 
