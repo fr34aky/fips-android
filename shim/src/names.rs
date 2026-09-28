@@ -66,7 +66,6 @@ impl Names {
                 config.nostr_relays.clone()
             },
             mesh_relays: config.names_mesh_relays.clone(),
-            upstreams: upstreams.clone(),
             allow_unverified_offline: config.names_allow_unverified_offline,
             ..ResolverConfig::default()
         };
