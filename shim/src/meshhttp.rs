@@ -121,6 +121,15 @@ pub(crate) struct FlowGuard {
     pub(crate) rx: Receiver<Vec<u8>>,
 }
 
+impl FlowGuard {
+    /// Hand the flow's packets to another thread (`meshtcp.rs`), keeping the
+    /// guard — and with it the flow — where it is. The receiver then ends
+    /// when the guard drops.
+    pub(crate) fn take_rx(&mut self) -> Receiver<Vec<u8>> {
+        std::mem::replace(&mut self.rx, std::sync::mpsc::channel().1)
+    }
+}
+
 impl Drop for FlowGuard {
     fn drop(&mut self) {
         self.divert.flows.lock().unwrap().remove(&self.key);
@@ -263,7 +272,7 @@ pub fn get(
 /// the responder registers the identity with the node before it replies, and
 /// without it the node answers the SYN with "destination unreachable".
 /// Best effort — the node may know the identity already.
-fn register_identity(responder: SocketAddr, npub: &str) {
+pub(crate) fn register_identity(responder: SocketAddr, npub: &str) {
     let Ok(socket) = UdpSocket::bind(if responder.is_ipv6() {
         "[::1]:0"
     } else {
