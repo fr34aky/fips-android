@@ -16,8 +16,9 @@ use std::time::{Duration, Instant};
 
 use fips::{TunPacketAction, TunPacketProcessor};
 use smoltcp::iface::{Config, Interface, SocketSet};
-use smoltcp::socket::udp;
-use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr, IpEndpoint};
+use smoltcp::phy::ChecksumCapabilities;
+use smoltcp::socket::{icmp, udp};
+use smoltcp::wire::{HardwareAddress, Icmpv6Message, Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpEndpoint};
 
 use crate::meshhttp::{Device, FetchError, MeshLink, is_icmp_unreachable, random_u64};
 
@@ -172,9 +173,141 @@ fn exchange<E: FnMut(Vec<u8>) -> Result<(), FetchError>>(
     }
 }
 
+/// Is `addr` reachable through the node right now? An ICMPv6 echo from the
+/// node's own address; the reply comes back through [`Divert`] keyed on the
+/// identifier. fips drops traffic for a node it has no path to silently, so
+/// this is the only positive signal short of a full session (the public
+/// names resolver asks before handing an application a node's address).
+pub fn ping(link: &MeshLink, addr: Ipv6Addr, timeout: Duration) -> Result<bool, FetchError> {
+    if addr == link.our_addr {
+        return Ok(true);
+    }
+    let flow = link
+        .divert
+        .open(addr, 0)
+        .ok_or_else(|| FetchError::other("no free local port"))?;
+    let ident = flow.key.2;
+    let processor: TunPacketProcessor = link.processor.clone();
+    let outbound = link.outbound_tx.clone();
+    let egress = move |mut packet: Vec<u8>| -> Result<(), FetchError> {
+        match processor.process(&mut packet) {
+            TunPacketAction::Forward => outbound
+                .blocking_send(packet)
+                .map_err(|_| FetchError::restarted()),
+            TunPacketAction::Hairpin => Ok(()),
+            TunPacketAction::Respond(_) => Err(FetchError::unreachable(format!(
+                "the node refused to send to {addr}"
+            ))),
+            TunPacketAction::Drop => Ok(()),
+        }
+    };
+    echo(egress, &flow.rx, link.our_addr, addr, ident, Instant::now() + timeout, &link.running)
+}
+
+fn echo<E: FnMut(Vec<u8>) -> Result<(), FetchError>>(
+    egress: E,
+    rx: &Receiver<Vec<u8>>,
+    local: Ipv6Addr,
+    remote: Ipv6Addr,
+    ident: u16,
+    deadline: Instant,
+    alive: &AtomicBool,
+) -> Result<bool, FetchError> {
+    let start = Instant::now();
+    let now = || smoltcp::time::Instant::from_millis(start.elapsed().as_millis() as i64);
+    let mut device = Device {
+        rx: VecDeque::new(),
+        egress,
+        failed: None,
+    };
+    let mut config = Config::new(HardwareAddress::Ip);
+    config.random_seed = random_u64();
+    let mut iface = Interface::new(config, &mut device, now());
+    iface.update_ip_addrs(|addrs| {
+        let _ = addrs.push(IpCidr::new(IpAddress::Ipv6(local), 8));
+    });
+    let socket = icmp::Socket::new(
+        icmp::PacketBuffer::new(vec![icmp::PacketMetadata::EMPTY; 4], vec![0; 1024]),
+        icmp::PacketBuffer::new(vec![icmp::PacketMetadata::EMPTY; 4], vec![0; 1024]),
+    );
+    let mut sockets = SocketSet::new(Vec::new());
+    let handle = sockets.add(socket);
+    sockets
+        .get_mut::<icmp::Socket>(handle)
+        .bind(icmp::Endpoint::Ident(ident))
+        .map_err(|e| FetchError::other(format!("icmp bind: {e:?}")))?;
+    let send = |sockets: &mut SocketSet, seq_no: u16| -> Result<(), FetchError> {
+        let repr = Icmpv6Repr::EchoRequest {
+            ident,
+            seq_no,
+            data: b"fips-pubdom reachability",
+        };
+        let mut buf = vec![0u8; repr.buffer_len()];
+        // The socket recomputes the checksum on dispatch.
+        repr.emit(&local, &remote, &mut Icmpv6Packet::new_unchecked(&mut buf), &ChecksumCapabilities::ignored());
+        sockets
+            .get_mut::<icmp::Socket>(handle)
+            .send_slice(&buf, IpAddress::Ipv6(remote))
+            .map_err(|e| FetchError::other(format!("icmp send: {e:?}")))
+    };
+    send(&mut sockets, 0)?;
+    let mut resent = false;
+    let mut buf = vec![0u8; 1024];
+    loop {
+        if !alive.load(Ordering::Relaxed) {
+            return Err(FetchError::restarted());
+        }
+        iface.poll(now(), &mut device, &mut sockets);
+        if let Some(e) = device.failed.take() {
+            return Err(e);
+        }
+        let socket = sockets.get_mut::<icmp::Socket>(handle);
+        while socket.can_recv() {
+            let Ok((n, from)) = socket.recv_slice(&mut buf) else { break };
+            if from == IpAddress::Ipv6(remote)
+                && let Ok(p) = Icmpv6Packet::new_checked(&buf[..n])
+                && p.msg_type() == Icmpv6Message::EchoReply
+            {
+                return Ok(true);
+            }
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Ok(false);
+        }
+        // A second request halfway: the first can race the path setup.
+        if !resent && start.elapsed() * 2 >= deadline.saturating_duration_since(start) {
+            send(&mut sockets, 1)?;
+            resent = true;
+        }
+        let wait = iface
+            .poll_delay(now(), &sockets)
+            .map(|d| Duration::from_micros(d.total_micros()))
+            .unwrap_or(Duration::from_millis(100))
+            .min(Duration::from_millis(100))
+            .min(left);
+        match rx.recv_timeout(wait) {
+            Ok(packet) => {
+                // Unreachable errors are not a reply; everything else feeds the stack.
+                if !is_icmp_unreachable(&packet) {
+                    device.rx.push_back(packet);
+                }
+                while let Ok(packet) = rx.try_recv() {
+                    if !is_icmp_unreachable(&packet) {
+                        device.rx.push_back(packet);
+                    }
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Err(FetchError::restarted()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     /// The client loop against a smoltcp UDP echo server on the far end of
     /// two channels: the reply comes back from the asked endpoint.
@@ -247,6 +380,71 @@ mod tests {
         assert_eq!(reply[..2], query[..2]);
         assert_eq!(reply[2] & 0x80, 0x80);
         assert_eq!(server.join().unwrap().unwrap(), reply);
+    }
+
+    /// A smoltcp interface answers echo requests for its own address by
+    /// itself, so the far side of two channels is a complete peer.
+    #[test]
+    fn echo_is_answered_by_a_userspace_peer_and_not_by_silence() {
+        let client_addr: Ipv6Addr = "fd00::1".parse().unwrap();
+        let server_addr: Ipv6Addr = "fd00::2".parse().unwrap();
+        let (to_server, server_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let (to_client, client_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_server = stop.clone();
+        let server = std::thread::spawn(move || {
+            let start = Instant::now();
+            let now = || smoltcp::time::Instant::from_millis(start.elapsed().as_millis() as i64);
+            let mut device = Device {
+                rx: VecDeque::new(),
+                egress: move |p: Vec<u8>| {
+                    let _ = to_client.send(p);
+                    Ok(())
+                },
+                failed: None,
+            };
+            let mut iface = Interface::new(Config::new(HardwareAddress::Ip), &mut device, now());
+            iface.update_ip_addrs(|a| {
+                let _ = a.push(IpCidr::new(IpAddress::Ipv6(server_addr), 8));
+            });
+            let mut sockets = SocketSet::new(Vec::new());
+            while !stop_server.load(Ordering::Relaxed) && start.elapsed() < Duration::from_secs(10) {
+                while let Ok(p) = server_rx.try_recv() {
+                    device.rx.push_back(p);
+                }
+                iface.poll(now(), &mut device, &mut sockets);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let ok = echo(
+            move |p| {
+                let _ = to_server.send(p);
+                Ok(())
+            },
+            &client_rx,
+            client_addr,
+            server_addr,
+            61234,
+            Instant::now() + Duration::from_secs(5),
+            &AtomicBool::new(true),
+        )
+        .unwrap();
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        assert!(ok, "the userspace peer answers the echo");
+
+        let (_tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let ok = echo(
+            |_| Ok(()),
+            &rx,
+            client_addr,
+            "fd00::9".parse().unwrap(),
+            61235,
+            Instant::now() + Duration::from_millis(300),
+            &AtomicBool::new(true),
+        )
+        .unwrap();
+        assert!(!ok, "silence is not reachability");
     }
 
     #[test]

@@ -129,10 +129,11 @@ impl Drop for FlowGuard {
 }
 
 /// The flow a mesh→app packet belongs to: a TCP segment or UDP datagram by
-/// its ports (both carry them at the same offsets), or an ICMPv6 error by
-/// the packet it quotes (which we sent, so the ports are swapped). No
-/// extension headers: the far side's stack and the node send none on this
-/// path.
+/// its ports (both carry them at the same offsets), an ICMPv6 echo reply by
+/// its identifier (allocated from the same port range, remote port 0), or
+/// an ICMPv6 error by the packet it quotes (which we sent, so the ports are
+/// swapped). No extension headers: the far side's stack and the node send
+/// none on this path.
 fn flow_key(p: &[u8]) -> Option<FlowKey> {
     if p.len() < 44 || p[0] >> 4 != 6 {
         return None;
@@ -141,6 +142,8 @@ fn flow_key(p: &[u8]) -> Option<FlowKey> {
     let port = |b: &[u8]| u16::from_be_bytes([b[0], b[1]]);
     match p[6] {
         6 | 17 => Some((addr(&p[8..24]), port(&p[40..42]), port(&p[42..44]))),
+        // Echo reply: type, code, checksum, identifier, sequence.
+        58 if p[40] == 129 && p.len() >= 48 => Some((addr(&p[8..24]), 0, port(&p[44..46]))),
         // Destination unreachable: 8-byte ICMP header, then our packet.
         58 if p[40] == 1 && p.len() >= 48 + 44 && matches!(p[48 + 6], 6 | 17) => {
             let q = &p[48..];
@@ -633,6 +636,20 @@ mod tests {
                 .claim(tcp("fd01::3".parse().unwrap(), 8321, port))
                 .is_some()
         );
+
+        // An echo reply is claimed by its identifier.
+        let echo_flow = divert.open(remote, 0).unwrap();
+        let mut reply = vec![0u8; 48];
+        reply[0] = 0x60;
+        reply[6] = 58;
+        reply[8..24].copy_from_slice(&remote.octets());
+        reply[40] = 129;
+        reply[44..46].copy_from_slice(&echo_flow.key.2.to_be_bytes());
+        assert!(divert.claim(reply.clone()).is_none());
+        assert!(echo_flow.rx.try_recv().is_ok());
+        reply[44..46].copy_from_slice(&[0, 1]);
+        assert!(divert.claim(reply).is_some(), "another identifier passes through");
+        drop(echo_flow);
 
         // An ICMPv6 unreachable quoting our SYN reaches the flow too.
         let mut icmp = vec![0u8; 48];

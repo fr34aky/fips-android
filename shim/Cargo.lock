@@ -2811,7 +2811,7 @@ checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 [[package]]
 name = "pubdom-core"
 version = "0.1.0"
-source = "git+https://github.com/fr34aky/fips-pub-domains?rev=8a68549#8a685493da8456ffc3a784838ff9d3baf50179fd"
+source = "git+https://github.com/fr34aky/fips-pub-domains?rev=6a8fc9a#6a8fc9a143a270c36dba72b90da2150b124d1fa2"
 dependencies = [
  "bech32 0.11.1",
  "hex",
@@ -2826,7 +2826,7 @@ dependencies = [
 [[package]]
 name = "pubdom-resolve"
 version = "0.1.0"
-source = "git+https://github.com/fr34aky/fips-pub-domains?rev=8a68549#8a685493da8456ffc3a784838ff9d3baf50179fd"
+source = "git+https://github.com/fr34aky/fips-pub-domains?rev=6a8fc9a#6a8fc9a143a270c36dba72b90da2150b124d1fa2"
 dependencies = [
  "futures",
  "hickory-resolver",
@@ -2836,6 +2836,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "simple-dns",
+ "socket2",
  "thiserror 2.0.19",
  "tokio",
  "tracing",

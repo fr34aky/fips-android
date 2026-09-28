@@ -27,13 +27,13 @@ jni = "0.21"
 # core and the resolver adapters from fr34aky/fips-names, pinned like fips.
 # The phone-only parts (mesh transport, responder registration) are
 # names.rs / meshudp.rs here.
-pubdom-core = { git = "https://github.com/fr34aky/fips-pub-domains", rev = "8a68549" }
-pubdom-resolve = { git = "https://github.com/fr34aky/fips-pub-domains", rev = "8a68549" }
+pubdom-core = { git = "https://github.com/fr34aky/fips-pub-domains", rev = "6a8fc9a" }
+pubdom-resolve = { git = "https://github.com/fr34aky/fips-pub-domains", rev = "6a8fc9a" }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-smoltcp = { version = "0.14.0", default-features = false, features = ["std", "medium-ip", "proto-ipv6", "socket-tcp", "socket-udp"] }
+smoltcp = { version = "0.14.0", default-features = false, features = ["std", "medium-ip", "proto-ipv6", "socket-tcp", "socket-udp", "socket-icmp"] }
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -42,6 +42,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Loopback websocket server standing in for a relay in the engine test
 # (same tungstenite the tree already carries via nostr-sdk; no TLS features).
 tungstenite = { version = "0.26", default-features = false }
+# The userspace peer in the meshudp echo test answers echo requests by
+# itself; real nodes answer through their kernels. Test builds only.
+smoltcp = { version = "0.14.0", default-features = false, features = ["auto-icmp-echo-reply"] }
 
 [profile.release]
 strip = true

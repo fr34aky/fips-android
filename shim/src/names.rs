@@ -134,6 +134,10 @@ impl MeshDns for PhoneMesh {
         Err(std::io::Error::other("TCP fallback not available on the phone"))
     }
 
+    fn reachable(&self, npub: Npub, timeout: Duration) -> bool {
+        crate::meshudp::ping(&self.link, npub.fips_address(), timeout).unwrap_or(false)
+    }
+
     fn register(&self, npub: Npub, timeout: Duration) -> bool {
         // Same exchange as meshhttp::register_identity, but the outcome
         // matters here: it doubles as the reachability signal (spec §7).
