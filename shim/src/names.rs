@@ -113,13 +113,21 @@ impl Lookup for Names {
         let rt = self.rt.as_ref()?;
         let resolver = self.resolver.clone();
         let q = query.to_vec();
-        match rt.block_on(async move {
-            tokio::time::timeout(BUDGET, resolver.lookup(&q)).await
-        }) {
-            Ok(LookupResult::Answer(a)) => Some(a),
-            Ok(LookupResult::Passthrough) => None,
+        // Spawned, not awaited in place: when the budget runs out the app
+        // gets the legacy answer, but the lookup carries on and caches its
+        // decision — so the retry every resolver makes is answered at once.
+        // Cancelling it instead meant a slow path (offline: TXT timeout,
+        // then a mesh relay) never finished, however often it was asked.
+        let task = rt.spawn(async move { resolver.lookup(&q).await });
+        match rt.block_on(async { tokio::time::timeout(BUDGET, task).await }) {
+            Ok(Ok(LookupResult::Answer(a))) => Some(a),
+            Ok(Ok(LookupResult::Passthrough)) => None,
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
+                None
+            }
             Err(_) => {
-                tracing::warn!("public-name lookup exceeded its budget; using the legacy answer");
+                tracing::info!("public-name lookup still running after its budget; using the legacy answer this time");
                 None
             }
         }
