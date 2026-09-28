@@ -1,13 +1,16 @@
 //! Public domain names over fips (`www.example.org` → a mesh node), the
-//! phone half of fr34aky/fips-names: `names-core` decides, `names-resolve`
-//! talks to relays and the legacy DNS, and this module supplies what only
+//! phone half of fr34aky/fips-pub-domains: `pubdom-core` decides,
+//! `pubdom-resolve` talks to relays and the legacy DNS, and this module
+//! supplies what only
 //! the phone can — the mesh transport (`meshudp.rs`) and the identity
 //! registration through the in-process responder — and runs the lookup
 //! from the DNS proxy's blocking per-query thread.
 //!
-//! Order of business for a non-`.fips` name (fips-names spec §5–§7): local
-//! pins, then — online — the `_fips-dns.<domain>` TXT record from the
-//! configured upstreams, a claim from the relays only after a TXT hit, step
+//! Order of business for a non-`.fips` name (fips-pub-domains spec §5–§7):
+//! local pins, then — online — the `_fips-dns.<domain>` TXT record from the
+//! configured upstreams, a claim from the relays only after a TXT hit (or,
+//! offline, a claim whose DNSSEC proof verifies — which needs mesh relays
+//! the app does not configure yet), step
 //! 3 to the domain's server over the mesh, and a synthesized answer with the
 //! node's `fd…` address. Everything else returns `None`, and the proxy
 //! forwards to the upstreams exactly as before: a name that is not over
@@ -66,7 +69,6 @@ impl Names {
                 config.nostr_relays.clone()
             },
             mesh_relays: config.names_mesh_relays.clone(),
-            upstreams: upstreams.clone(),
             allow_unverified_offline: config.names_allow_unverified_offline,
             ..ResolverConfig::default()
         };
