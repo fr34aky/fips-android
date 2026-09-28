@@ -25,6 +25,8 @@ object ConfigStore {
     const val FORWARD_CLEARNET = "forward_clearnet"
     const val BATTERY_SAVER = "battery_saver"
     const val LAN_MDNS = "enable_lan_mdns"
+    /** Public domain names over fips (www.example.ch → a mesh node), see the shim's `names.rs`. */
+    const val PUBLIC_NAMES = "public_names"
     const val HOTSPOT = "hotspot_enabled"
     const val INBOUND_FILTER = "inbound_filter"
     const val INBOUND_PORTS = "inbound_ports"
@@ -93,6 +95,7 @@ object ConfigStore {
     const val DEF_INBOUND_FILTER = true
     const val DEF_BATTERY_SAVER = true
     const val DEF_LAN_MDNS = true
+    const val DEF_PUBLIC_NAMES = true
     const val DEF_HOTSPOT = true
     const val DEF_AUTO_UPDATE = true
     const val DEF_FORWARD_CLEARNET = true
@@ -257,6 +260,7 @@ object ConfigStore {
         if (!p.contains(INBOUND_FILTER)) e.putBoolean(INBOUND_FILTER, DEF_INBOUND_FILTER)
         if (!p.contains(BATTERY_SAVER)) e.putBoolean(BATTERY_SAVER, DEF_BATTERY_SAVER)
         if (!p.contains(LAN_MDNS)) e.putBoolean(LAN_MDNS, DEF_LAN_MDNS)
+        if (!p.contains(PUBLIC_NAMES)) e.putBoolean(PUBLIC_NAMES, DEF_PUBLIC_NAMES)
         if (!p.contains(HOTSPOT)) e.putBoolean(HOTSPOT, DEF_HOTSPOT)
         if (!p.contains(AUTO_UPDATE)) e.putBoolean(AUTO_UPDATE, DEF_AUTO_UPDATE)
         if (!p.contains(FORWARD_CLEARNET)) e.putBoolean(FORWARD_CLEARNET, DEF_FORWARD_CLEARNET)
@@ -272,6 +276,9 @@ object ConfigStore {
 
     /** LAN mDNS discovery, honouring the default. */
     fun lanMdns(context: Context) = prefs(context).getBoolean(LAN_MDNS, DEF_LAN_MDNS)
+
+    /** Public domain names over fips, honouring the default. */
+    fun publicNames(context: Context) = prefs(context).getBoolean(PUBLIC_NAMES, DEF_PUBLIC_NAMES)
 
     /** FIPS Hotspot auto-join, honouring the default. */
     fun hotspotEnabled(context: Context) = prefs(context).getBoolean(HOTSPOT, DEF_HOTSPOT)
@@ -338,6 +345,13 @@ object ConfigStore {
             // Always sent, file or no file: the shim watches the path, so the
             // first name added while connected resolves without a rebind.
             .put("hosts_path", HostsStore.file(context).absolutePath)
+
+        // Public domain names over fips: the pin file next to the hosts file.
+        // Sending the path is what turns the feature on in the shim; a name
+        // without a verified binding is forwarded to the upstreams as before.
+        if (publicNames(context)) {
+            config.put("names_pins_path", HostsStore.file(context).resolveSibling("names-pins.json").absolutePath)
+        }
 
         // Only a customised list is sent; omitted → fips's built-in relays
         // (the shim treats an empty array the same way). Re-normalised on the

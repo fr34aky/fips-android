@@ -58,7 +58,8 @@ pub struct MeshLink {
     pub running: Arc<AtomicBool>,
 }
 
-/// (remote address, remote port, local port) of an in-process TCP flow.
+/// (remote address, remote port, local port) of an in-process TCP or UDP
+/// flow (the two never share a key: local ports are handed out once).
 type FlowKey = ([u8; 16], u16, u16);
 
 /// Mesh→app packets that belong to an in-process flow, taken out of the
@@ -91,7 +92,7 @@ impl Divert {
     }
 
     /// Open a flow on a free local port; it closes when the guard drops.
-    fn open(self: &Arc<Self>, remote: Ipv6Addr, remote_port: u16) -> Option<FlowGuard> {
+    pub(crate) fn open(self: &Arc<Self>, remote: Ipv6Addr, remote_port: u16) -> Option<FlowGuard> {
         let mut flows = self.flows.lock().unwrap();
         let span = (LOCAL_PORTS.end() - LOCAL_PORTS.start()) as u64 + 1;
         let first = random_u64() % span;
@@ -114,10 +115,10 @@ impl Divert {
     }
 }
 
-struct FlowGuard {
+pub(crate) struct FlowGuard {
     divert: Arc<Divert>,
-    key: FlowKey,
-    rx: Receiver<Vec<u8>>,
+    pub(crate) key: FlowKey,
+    pub(crate) rx: Receiver<Vec<u8>>,
 }
 
 impl Drop for FlowGuard {
@@ -127,8 +128,10 @@ impl Drop for FlowGuard {
     }
 }
 
-/// The flow a mesh→app packet belongs to: a TCP segment by its ports, or an
-/// ICMPv6 error by the packet it quotes (which we sent, so the ports are
+/// The flow a mesh→app packet belongs to: a TCP segment or UDP datagram by
+/// its ports (both carry them at the same offsets), an ICMPv6 echo reply by
+/// its identifier (allocated from the same port range, remote port 0), or
+/// an ICMPv6 error by the packet it quotes (which we sent, so the ports are
 /// swapped). No extension headers: the far side's stack and the node send
 /// none on this path.
 fn flow_key(p: &[u8]) -> Option<FlowKey> {
@@ -138,9 +141,11 @@ fn flow_key(p: &[u8]) -> Option<FlowKey> {
     let addr = |b: &[u8]| -> [u8; 16] { b.try_into().unwrap() };
     let port = |b: &[u8]| u16::from_be_bytes([b[0], b[1]]);
     match p[6] {
-        6 => Some((addr(&p[8..24]), port(&p[40..42]), port(&p[42..44]))),
+        6 | 17 => Some((addr(&p[8..24]), port(&p[40..42]), port(&p[42..44]))),
+        // Echo reply: type, code, checksum, identifier, sequence.
+        58 if p[40] == 129 && p.len() >= 48 => Some((addr(&p[8..24]), 0, port(&p[44..46]))),
         // Destination unreachable: 8-byte ICMP header, then our packet.
-        58 if p[40] == 1 && p.len() >= 48 + 44 && p[48 + 6] == 6 => {
+        58 if p[40] == 1 && p.len() >= 48 + 44 && matches!(p[48 + 6], 6 | 17) => {
             let q = &p[48..];
             Some((addr(&q[24..40]), port(&q[42..44]), port(&q[40..42])))
         }
@@ -148,14 +153,14 @@ fn flow_key(p: &[u8]) -> Option<FlowKey> {
     }
 }
 
-fn is_icmp_unreachable(p: &[u8]) -> bool {
+pub(crate) fn is_icmp_unreachable(p: &[u8]) -> bool {
     p.len() > 40 && p[6] == 58 && p[40] == 1
 }
 
 /// Per-process random bits (std seeds `RandomState` from the OS once and
 /// perturbs it per instance) — enough for a port pick and an ISN seed,
 /// without `getrandom(2)`, which bionic only has from API 28.
-fn random_u64() -> u64 {
+pub(crate) fn random_u64() -> u64 {
     let mut h = std::hash::RandomState::new().build_hasher();
     h.write_u128(
         std::time::SystemTime::now()
@@ -179,21 +184,21 @@ pub struct FetchError {
 }
 
 impl FetchError {
-    fn other(message: impl Into<String>) -> Self {
+    pub(crate) fn other(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             unreachable: false,
             restarted: false,
         }
     }
-    fn unreachable(message: impl Into<String>) -> Self {
+    pub(crate) fn unreachable(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             unreachable: true,
             restarted: false,
         }
     }
-    fn restarted() -> Self {
+    pub(crate) fn restarted() -> Self {
         Self {
             message: "the node restarted during the request".into(),
             unreachable: false,
@@ -278,7 +283,7 @@ fn register_identity(responder: SocketAddr, npub: &str) {
 }
 
 /// A minimal DNS query message: one AAAA/IN question, recursion desired.
-fn aaaa_query(id: u16, name: &str) -> Vec<u8> {
+pub(crate) fn aaaa_query(id: u16, name: &str) -> Vec<u8> {
     let mut q = Vec::with_capacity(name.len() + 18);
     q.extend_from_slice(&id.to_be_bytes());
     q.extend_from_slice(&[0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0]);
@@ -308,14 +313,15 @@ fn build_request(addr: Ipv6Addr, port: u16, path: &str, headers: &[(String, Stri
 
 /// smoltcp device: received packets queue in `rx`, transmitted ones go to
 /// `egress` at once. The first egress failure is kept and ends the exchange.
-struct Device<E> {
-    rx: VecDeque<Vec<u8>>,
-    egress: E,
-    failed: Option<FetchError>,
+/// Shared with `meshudp.rs`.
+pub(crate) struct Device<E> {
+    pub(crate) rx: VecDeque<Vec<u8>>,
+    pub(crate) egress: E,
+    pub(crate) failed: Option<FetchError>,
 }
 
-struct RxToken(Vec<u8>);
-struct TxToken<'a, E>(&'a mut Device<E>);
+pub(crate) struct RxToken(Vec<u8>);
+pub(crate) struct TxToken<'a, E>(&'a mut Device<E>);
 
 impl phy::RxToken for RxToken {
     fn consume<R, F: FnOnce(&[u8]) -> R>(self, f: F) -> R {
@@ -630,6 +636,20 @@ mod tests {
                 .claim(tcp("fd01::3".parse().unwrap(), 8321, port))
                 .is_some()
         );
+
+        // An echo reply is claimed by its identifier.
+        let echo_flow = divert.open(remote, 0).unwrap();
+        let mut reply = vec![0u8; 48];
+        reply[0] = 0x60;
+        reply[6] = 58;
+        reply[8..24].copy_from_slice(&remote.octets());
+        reply[40] = 129;
+        reply[44..46].copy_from_slice(&echo_flow.key.2.to_be_bytes());
+        assert!(divert.claim(reply.clone()).is_none());
+        assert!(echo_flow.rx.try_recv().is_ok());
+        reply[44..46].copy_from_slice(&[0, 1]);
+        assert!(divert.claim(reply).is_some(), "another identifier passes through");
+        drop(echo_flow);
 
         // An ICMPv6 unreachable quoting our SYN reaches the flow too.
         let mut icmp = vec![0u8; 48];

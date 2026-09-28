@@ -14,6 +14,8 @@ pub mod forward;
 mod jni_api;
 pub mod logbuf;
 pub mod meshhttp;
+pub mod meshudp;
+pub mod names;
 pub mod packet;
 pub mod pump;
 

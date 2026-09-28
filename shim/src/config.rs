@@ -113,6 +113,23 @@ pub struct ShimConfig {
     /// changes: an edit takes effect on the next query, no node restart.
     #[serde(default)]
     pub hosts_path: Option<String>,
+    /// Public domain names over fips (`names.rs`): the app-private pin file
+    /// (`domain → server npub`, JSON, same schema as the desktop daemon's).
+    /// Set = the feature is on; the file is created on the first verified
+    /// binding. The DNS proxy then checks every non-`.fips` name for a
+    /// binding before forwarding it — a name without one is forwarded
+    /// exactly as before.
+    #[serde(default)]
+    pub names_pins_path: Option<String>,
+    /// Nostr relays reachable over the mesh (`ws://[fd…]:port`), asked for
+    /// claims when the legacy DNS is unreachable. Empty: offline lookups
+    /// resolve only pinned domains.
+    #[serde(default)]
+    pub names_mesh_relays: Vec<String>,
+    /// Offline, resolve a domain whose claim cannot be verified (no pin, no
+    /// DNSSEC proof) — logged as UNVERIFIED on every use. Off by default.
+    #[serde(default)]
+    pub names_allow_unverified_offline: bool,
     /// Advanced: a full `fips.yaml`. When non-empty it becomes the base
     /// `fips::Config` (all fips parameters — transports, node.*, rendezvous,
     /// dns, lookup, …); the shim then forces the non-negotiable Android bits
