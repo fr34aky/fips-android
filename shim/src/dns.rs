@@ -549,7 +549,7 @@ mod tests {
         let fd: [u8; 16] = reply[reply.len() - 16..].try_into().unwrap();
         assert_eq!(fd, pubdom_core::Npub::from_bytes([7; 32]).fips_address().octets());
 
-        let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", TYPE_AAAA));
+        let reply = ask(&proxy, &replies, &typed_query_for("www.example.net", TYPE_AAAA));
         assert_eq!(reply[3] & 0x0f, 3, "not over fips: the upstream's answer");
     }
 
