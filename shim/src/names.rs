@@ -9,8 +9,8 @@
 //! Order of business for a non-`.fips` name (fips-pub-domains spec §5–§7):
 //! local pins, then — online — the `_fips-dns.<domain>` TXT record from the
 //! configured upstreams, a claim from the relays only after a TXT hit (or,
-//! offline, a claim whose DNSSEC proof verifies — which needs mesh relays
-//! the app does not configure yet), step
+//! offline, a claim from a relay on the mesh whose DNSSEC proof verifies),
+//! step
 //! 3 to the domain's server over the mesh, and a synthesized answer with the
 //! node's `fd…` address. Everything else returns `None`, and the proxy
 //! forwards to the upstreams exactly as before: a name that is not over
@@ -29,6 +29,7 @@ use pubdom_resolve::FilePinStore;
 
 use crate::config::ShimConfig;
 use crate::meshhttp::MeshLink;
+use crate::meshtcp::MeshRelayProxy;
 
 /// The whole lookup must fit inside what an app's resolver waits for (5 s on
 /// bionic) with room for the legacy fallback after it.
@@ -45,6 +46,8 @@ pub struct Names {
     /// while the worker keeps the relay pool alive.
     rt: Option<tokio::runtime::Runtime>,
     resolver: Arc<Resolver<MaybeTxt, RelayClient>>,
+    /// The mesh relays' loopback listeners; they stop when this drops.
+    _relays: Vec<MeshRelayProxy>,
 }
 
 impl Names {
@@ -57,6 +60,20 @@ impl Names {
             .enable_all()
             .build()
             .map_err(|e| format!("names runtime: {e}"))?;
+        // Relays on the mesh (`ws://<npub>.fips:port`): nostr-sdk's sockets
+        // cannot reach fd00::/8 from this app, so each gets a loopback
+        // listener carried over the in-process TCP stack (`meshtcp.rs`).
+        let proxies: Vec<MeshRelayProxy> = config
+            .names_mesh_relays
+            .iter()
+            .filter_map(|url| match MeshRelayProxy::start(link.clone(), url) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!(error = %e, "mesh relay not used");
+                    None
+                }
+            })
+            .collect();
         let upstreams: Vec<IpAddr> = config
             .upstream_addrs()
             .into_iter()
@@ -68,7 +85,7 @@ impl Names {
             } else {
                 config.nostr_relays.clone()
             },
-            mesh_relays: config.names_mesh_relays.clone(),
+            mesh_relays: proxies.iter().map(|p| p.local_url.clone()).collect(),
             allow_unverified_offline: config.names_allow_unverified_offline,
             ..ResolverConfig::default()
         };
@@ -81,7 +98,7 @@ impl Names {
             let relays = RelayClient::new(&rc.public_relays, &rc.mesh_relays, rc.relay_timeout).await;
             Resolver::new(rc, Arc::new(pins), txt, relays, Arc::new(PhoneMesh { link }))
         });
-        Ok(Arc::new(Self { rt: Some(rt), resolver: Arc::new(resolver) }))
+        Ok(Arc::new(Self { rt: Some(rt), resolver: Arc::new(resolver), _relays: proxies }))
     }
 
     /// The network moved: what was "unreachable" may answer now, and vice
@@ -96,13 +113,21 @@ impl Lookup for Names {
         let rt = self.rt.as_ref()?;
         let resolver = self.resolver.clone();
         let q = query.to_vec();
-        match rt.block_on(async move {
-            tokio::time::timeout(BUDGET, resolver.lookup(&q)).await
-        }) {
-            Ok(LookupResult::Answer(a)) => Some(a),
-            Ok(LookupResult::Passthrough) => None,
+        // Spawned, not awaited in place: when the budget runs out the app
+        // gets the legacy answer, but the lookup carries on and caches its
+        // decision — so the retry every resolver makes is answered at once.
+        // Cancelling it instead meant a slow path (offline: TXT timeout,
+        // then a mesh relay) never finished, however often it was asked.
+        let task = rt.spawn(async move { resolver.lookup(&q).await });
+        match rt.block_on(async { tokio::time::timeout(BUDGET, task).await }) {
+            Ok(Ok(LookupResult::Answer(a))) => Some(a),
+            Ok(Ok(LookupResult::Passthrough)) => None,
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
+                None
+            }
             Err(_) => {
-                tracing::warn!("public-name lookup exceeded its budget; using the legacy answer");
+                tracing::info!("public-name lookup still running after its budget; using the legacy answer this time");
                 None
             }
         }

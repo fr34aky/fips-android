@@ -27,6 +27,11 @@ object ConfigStore {
     const val LAN_MDNS = "enable_lan_mdns"
     /** Public domain names over fips (www.example.ch → a mesh node), see the shim's `names.rs`. */
     const val PUBLIC_NAMES = "public_names"
+    /**
+     * Relays on the mesh for public names, one `ws://<npub>.fips[:port]` per
+     * line, as typed; [meshRelays] validates on the way out. Blank = none.
+     */
+    const val NAMES_MESH_RELAYS = "names_mesh_relays"
     const val HOTSPOT = "hotspot_enabled"
     const val INBOUND_FILTER = "inbound_filter"
     const val INBOUND_PORTS = "inbound_ports"
@@ -215,6 +220,55 @@ object ConfigStore {
         e.apply()
     }
 
+    /** The mesh relays for public names, validated; at most [MAX_RELAYS]. */
+    fun meshRelays(context: Context): List<String> =
+        (prefs(context).getString(NAMES_MESH_RELAYS, "") ?: "").lines()
+            .mapNotNull { normalizeMeshRelay(it) }.distinct().take(MAX_RELAYS)
+
+    /**
+     * A relay on the mesh: `ws://<npub>.fips[:port][/path]` (the scheme may
+     * be left out). No `wss`: the mesh is already encrypted and authenticated,
+     * and nothing on it holds a certificate for an npub name. Null for
+     * anything else, including public relays — those go in the relay list.
+     */
+    fun normalizeMeshRelay(input: String): String? {
+        val raw = input.trim()
+        if (raw.isEmpty() || raw.any { it.isWhitespace() }) return null
+        val withScheme = if ("://" in raw) raw else "ws://$raw"
+        val uri = runCatching { java.net.URI(withScheme) }.getOrNull() ?: return null
+        if (uri.scheme?.lowercase() != "ws") return null
+        if (uri.userInfo != null || uri.fragment != null || uri.rawQuery != null) return null
+        val host = uri.host?.lowercase() ?: return null
+        val label = host.removeSuffix(".fips")
+        if (label == host || !isNpub(label)) return null
+        if (uri.port != -1 && uri.port !in 1..65535) return null
+        val port = if (uri.port == -1) "" else ":${uri.port}"
+        val path = (uri.rawPath ?: "").trimEnd('/')
+        return "ws://$host$port$path"
+    }
+
+    /** Lines of [text] that are not a valid mesh relay (for the Settings hint). */
+    fun invalidMeshRelays(text: String): List<String> =
+        text.lines().map { it.trim() }.filter { it.isNotEmpty() && normalizeMeshRelay(it) == null }
+
+    private const val BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+    /** A bech32 `npub1…` with a valid checksum (BIP-173) and a 32-byte key. */
+    fun isNpub(s: String): Boolean {
+        if (s.length != 63 || !s.startsWith("npub1")) return false
+        val data = s.substring(5).map { BECH32.indexOf(it).takeIf { i -> i >= 0 } ?: return false }
+        val hrp = "npub"
+        val values = hrp.map { it.code shr 5 } + 0 + hrp.map { it.code and 31 } + data
+        var chk = 1
+        val gen = intArrayOf(0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3)
+        for (v in values) {
+            val top = chk ushr 25
+            chk = ((chk and 0x1ffffff) shl 5) xor v
+            for (i in 0 until 5) if ((top ushr i) and 1 == 1) chk = chk xor gen[i]
+        }
+        return chk == 1
+    }
+
     /**
      * Canonical form of a user-typed relay, or null if it is not one. Strict
      * on purpose: fips adds every configured relay with `add_relay(..)?`, so a
@@ -351,6 +405,9 @@ object ConfigStore {
         // without a verified binding is forwarded to the upstreams as before.
         if (publicNames(context)) {
             config.put("names_pins_path", HostsStore.file(context).resolveSibling("names-pins.json").absolutePath)
+            meshRelays(context).takeIf { it.isNotEmpty() }?.let {
+                config.put("names_mesh_relays", JSONArray(it))
+            }
         }
 
         // Only a customised list is sent; omitted → fips's built-in relays
