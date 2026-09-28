@@ -14,6 +14,7 @@ import android.widget.LinearLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
+import com.google.android.material.textfield.TextInputLayout
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -165,6 +166,17 @@ class SettingsFragment : Fragment() {
         }
         // Dropdowns are EditTexts too; a picked item arrives as a text change.
         for (id in TEXT_FIELDS) edit(view, id).doAfterTextChanged { syncSaveButton(view) }
+        // Invalid mesh relays are dropped on the way to the shim; say so here
+        // rather than let the user believe offline verification is set up.
+        val relays = edit(view, R.id.names_mesh_relays)
+        val showInvalid = {
+            val bad = CS.invalidMeshRelays(relays.text.toString())
+            view.findViewById<TextInputLayout>(R.id.names_mesh_relays_layout).error =
+                if (bad.isEmpty()) null
+                else "Not a ws://npub1….fips relay, ignored: " + bad.joinToString(", ")
+        }
+        relays.doAfterTextChanged { showInvalid() }
+        showInvalid()
         syncSaveButton(view)
     }
 

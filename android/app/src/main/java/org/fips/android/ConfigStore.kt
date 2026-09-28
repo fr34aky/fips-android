@@ -220,13 +220,6 @@ object ConfigStore {
         e.apply()
     }
 
-    /**
-     * Canonical form of a user-typed relay, or null if it is not one. Strict
-     * on purpose: fips adds every configured relay with `add_relay(..)?`, so a
-     * single URL nostr-sdk rejects fails the whole Nostr bootstrap — NAT
-     * traversal and npub lookup gone, with only a log line to show for it. A
-     * bare host gets `wss://`; `ws://` stays allowed for LAN/test relays.
-     */
     /** The mesh relays for public names, validated; at most [MAX_RELAYS]. */
     fun meshRelays(context: Context): List<String> =
         (prefs(context).getString(NAMES_MESH_RELAYS, "") ?: "").lines()
@@ -247,13 +240,42 @@ object ConfigStore {
         if (uri.userInfo != null || uri.fragment != null || uri.rawQuery != null) return null
         val host = uri.host?.lowercase() ?: return null
         val label = host.removeSuffix(".fips")
-        if (label == host || !label.matches(Regex("npub1[02-9ac-hj-np-z]{58}"))) return null
+        if (label == host || !isNpub(label)) return null
         if (uri.port != -1 && uri.port !in 1..65535) return null
         val port = if (uri.port == -1) "" else ":${uri.port}"
         val path = (uri.rawPath ?: "").trimEnd('/')
         return "ws://$host$port$path"
     }
 
+    /** Lines of [text] that are not a valid mesh relay (for the Settings hint). */
+    fun invalidMeshRelays(text: String): List<String> =
+        text.lines().map { it.trim() }.filter { it.isNotEmpty() && normalizeMeshRelay(it) == null }
+
+    private const val BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+    /** A bech32 `npub1…` with a valid checksum (BIP-173) and a 32-byte key. */
+    fun isNpub(s: String): Boolean {
+        if (s.length != 63 || !s.startsWith("npub1")) return false
+        val data = s.substring(5).map { BECH32.indexOf(it).takeIf { i -> i >= 0 } ?: return false }
+        val hrp = "npub"
+        val values = hrp.map { it.code shr 5 } + 0 + hrp.map { it.code and 31 } + data
+        var chk = 1
+        val gen = intArrayOf(0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3)
+        for (v in values) {
+            val top = chk ushr 25
+            chk = ((chk and 0x1ffffff) shl 5) xor v
+            for (i in 0 until 5) if ((top ushr i) and 1 == 1) chk = chk xor gen[i]
+        }
+        return chk == 1
+    }
+
+    /**
+     * Canonical form of a user-typed relay, or null if it is not one. Strict
+     * on purpose: fips adds every configured relay with `add_relay(..)?`, so a
+     * single URL nostr-sdk rejects fails the whole Nostr bootstrap — NAT
+     * traversal and npub lookup gone, with only a log line to show for it. A
+     * bare host gets `wss://`; `ws://` stays allowed for LAN/test relays.
+     */
     fun normalizeRelay(input: String): String? {
         val raw = input.trim()
         if (raw.isEmpty() || raw.any { it.isWhitespace() }) return null
