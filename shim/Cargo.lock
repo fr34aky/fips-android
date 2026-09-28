@@ -2192,7 +2192,7 @@ dependencies = [
 [[package]]
 name = "names-core"
 version = "0.1.0"
-source = "git+https://github.com/fr34aky/fips-names?rev=a354500#a3545003af9483151a36bddd89d10435333f5a1f"
+source = "git+https://github.com/fr34aky/fips-names?rev=83d2f57#83d2f57f6176037c93fcab6ec48cdef201e070e8"
 dependencies = [
  "bech32 0.11.1",
  "hex",
@@ -2207,7 +2207,7 @@ dependencies = [
 [[package]]
 name = "names-resolve"
 version = "0.1.0"
-source = "git+https://github.com/fr34aky/fips-names?rev=a354500#a3545003af9483151a36bddd89d10435333f5a1f"
+source = "git+https://github.com/fr34aky/fips-names?rev=83d2f57#83d2f57f6176037c93fcab6ec48cdef201e070e8"
 dependencies = [
  "futures",
  "hickory-resolver",
