@@ -1196,8 +1196,8 @@ dependencies = [
  "ipstack",
  "jni 0.21.1",
  "libc",
- "names-core",
- "names-resolve",
+ "pubdom-core",
+ "pubdom-resolve",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2190,39 +2190,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "names-core"
-version = "0.1.0"
-source = "git+https://github.com/fr34aky/fips-names?rev=83d2f57#83d2f57f6176037c93fcab6ec48cdef201e070e8"
-dependencies = [
- "bech32 0.11.1",
- "hex",
- "psl",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "simple-dns",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "names-resolve"
-version = "0.1.0"
-source = "git+https://github.com/fr34aky/fips-names?rev=83d2f57#83d2f57f6176037c93fcab6ec48cdef201e070e8"
-dependencies = [
- "futures",
- "hickory-resolver",
- "names-core",
- "nostr-sdk",
- "serde",
- "serde_json",
- "serde_yaml",
- "simple-dns",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "ndk-context"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2840,6 +2807,39 @@ name = "psl-types"
 version = "2.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
+
+[[package]]
+name = "pubdom-core"
+version = "0.1.0"
+source = "git+https://github.com/fr34aky/fips-pub-domains?rev=acdf972#acdf9724f0b86202c1db920ee8b395164aeeb496"
+dependencies = [
+ "bech32 0.11.1",
+ "hex",
+ "psl",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "simple-dns",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "pubdom-resolve"
+version = "0.1.0"
+source = "git+https://github.com/fr34aky/fips-pub-domains?rev=acdf972#acdf9724f0b86202c1db920ee8b395164aeeb496"
+dependencies = [
+ "futures",
+ "hickory-resolver",
+ "nostr-sdk",
+ "pubdom-core",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "simple-dns",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "quote"

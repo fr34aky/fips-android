@@ -17,12 +17,12 @@ use std::net::{IpAddr, SocketAddrV6, UdpSocket};
 use std::sync::Arc;
 use std::time::Duration;
 
-use names_core::Npub;
-use names_resolve::config::MaybeTxt;
-use names_resolve::mesh::MeshDns;
-use names_resolve::relay::RelayClient;
-use names_resolve::resolver::{LookupResult, Resolver, ResolverConfig};
-use names_resolve::{FilePinStore, TxtVerifier};
+use pubdom_core::Npub;
+use pubdom_resolve::config::MaybeTxt;
+use pubdom_resolve::mesh::MeshDns;
+use pubdom_resolve::relay::RelayClient;
+use pubdom_resolve::resolver::{LookupResult, Resolver, ResolverConfig};
+use pubdom_resolve::{FilePinStore, TxtVerifier};
 
 use crate::config::ShimConfig;
 use crate::meshhttp::MeshLink;

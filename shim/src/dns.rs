@@ -516,9 +516,9 @@ mod tests {
         struct Bound;
         impl crate::names::Lookup for Bound {
             fn lookup(&self, query: &[u8]) -> Option<Vec<u8>> {
-                let q = names_core::synth::parse_query(query)?;
+                let q = pubdom_core::synth::parse_query(query)?;
                 (q.name == "www.example.org")
-                    .then(|| names_core::synth::build_answer(&q, names_core::Npub::from_bytes([7; 32]), 30))
+                    .then(|| pubdom_core::synth::build_answer(&q, pubdom_core::Npub::from_bytes([7; 32]), 30))
                     .flatten()
             }
         }
@@ -547,7 +547,7 @@ mod tests {
         assert_eq!(reply[3] & 0x0f, 0, "answered over fips, not by the upstream");
         assert_eq!(reply[6..8], [0, 2], "CNAME + AAAA");
         let fd: [u8; 16] = reply[reply.len() - 16..].try_into().unwrap();
-        assert_eq!(fd, names_core::Npub::from_bytes([7; 32]).fips_address().octets());
+        assert_eq!(fd, pubdom_core::Npub::from_bytes([7; 32]).fips_address().octets());
 
         let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", TYPE_AAAA));
         assert_eq!(reply[3] & 0x0f, 3, "not over fips: the upstream's answer");
