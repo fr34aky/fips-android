@@ -24,7 +24,7 @@ fips = { git = "https://github.com/fr34aky/fips", rev = "f4a811e", default-featu
 ipstack = "1"
 jni = "0.21"
 # Public domain names over fips (www.example.org → a mesh node): the policy
-# core and the resolver adapters from fr34aky/fips-names, pinned like fips.
+# core and the resolver adapters from fr34aky/fips-pub-domains, pinned like fips.
 # The phone-only parts (mesh transport, responder registration) are
 # names.rs / meshudp.rs here.
 pubdom-core = { git = "https://github.com/fr34aky/fips-pub-domains", rev = "9d808dd" }
