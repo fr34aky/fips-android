@@ -106,6 +106,9 @@ struct Engine {
     /// What [`mesh_http_get_json`] borrows to speak TCP over the mesh from
     /// inside the process (the Mesh names sync).
     mesh: Arc<crate::meshhttp::MeshLink>,
+    /// Public domain names over fips, when on; its caches are flushed on a
+    /// network hint since "offline" and "online" decisions differ.
+    names: Option<Arc<crate::names::Names>>,
 }
 
 /// What `start()` reports back to Kotlin.
@@ -272,12 +275,41 @@ fn start_inner(
 
     let running = Arc::new(AtomicBool::new(true));
     let (writer_tx, writer_rx) = std::sync::mpsc::channel();
+
+    let divert = Arc::new(crate::meshhttp::Divert::default());
+    let mesh = Arc::new(crate::meshhttp::MeshLink {
+        our_addr: our_fips_addr.to_ipv6(),
+        processor: processor.clone(),
+        outbound_tx: outbound_tx.clone(),
+        divert: divert.clone(),
+        responder: LOCAL_RESPONDER.parse().unwrap(),
+        running: running.clone(),
+    });
+
+    // Public domain names over fips: needs the mesh link for step 3. A
+    // failure to set it up (unreadable pin file) costs the feature, never
+    // the connection.
+    let names = match shim_config.names_pins_path.as_deref() {
+        Some(path) => match crate::names::Names::start(&shim_config, mesh.clone(), path) {
+            Ok(n) => {
+                tracing::info!(pins = path, "public domain names over fips on");
+                Some(n)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "public domain names over fips off");
+                None
+            }
+        },
+        None => None,
+    };
+
     let dns = Arc::new(DnsProxy {
         local_responder: LOCAL_RESPONDER.parse().unwrap(),
         upstreams: shim_config.upstream_addrs(),
         writer_tx: writer_tx.clone(),
         protect: engine_protect.clone(),
         hosts: crate::dns::hosts_reloader(shim_config.hosts_path.as_deref()),
+        names: names.clone().map(|n| n as Arc<dyn crate::names::Lookup>),
     });
 
     // Clearnet forwarder (split-tunnel): non-mesh packets from the pump go
@@ -312,16 +344,6 @@ fn start_inner(
         tracing::warn!("inbound firewall disabled — all mesh traffic reaches local ports");
         None
     };
-
-    let divert = Arc::new(crate::meshhttp::Divert::default());
-    let mesh = Arc::new(crate::meshhttp::MeshLink {
-        our_addr: our_fips_addr.to_ipv6(),
-        processor: processor.clone(),
-        outbound_tx: outbound_tx.clone(),
-        divert: divert.clone(),
-        responder: LOCAL_RESPONDER.parse().unwrap(),
-        running: running.clone(),
-    });
 
     let pump = Pump::spawn(PumpConfig {
         tun_fd: owned_fd,
@@ -360,6 +382,7 @@ fn start_inner(
         relay_status,
         relay_refresh,
         mesh,
+        names,
     };
     Ok((engine, StartInfo { npub, address }))
 }
@@ -463,6 +486,9 @@ pub fn network_hint() {
     let slot = ENGINE.lock().unwrap();
     if let Some(engine) = slot.as_ref() {
         engine.netmon.poke();
+        if let Some(names) = &engine.names {
+            names.network_changed();
+        }
     }
 }
 

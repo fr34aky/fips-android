@@ -7,8 +7,10 @@
 //! - `*.fips` names → the in-process FIPS responder on `[::1]:5354`; a name
 //!   from the app's hosts file (`home.fips`) is first translated to its
 //!   `<npub>.fips` form — see [`DnsProxy::hosts`]
-//! - everything else → the configured upstream resolvers, over a socket run
-//!   through the protect hook so the query itself bypasses the tunnel
+//! - everything else → first the public-names resolver ([`DnsProxy::names`]:
+//!   a domain bound to a mesh node answers with that node's `fd…` address),
+//!   otherwise the configured upstream resolvers, over a socket run through
+//!   the protect hook so the query itself bypasses the tunnel
 //!
 //! Each query is served on a short-lived thread (blocking send/recv with a
 //! timeout); DNS is low-rate and this keeps the pump loop non-blocking.
@@ -44,6 +46,10 @@ pub struct DnsProxy {
     /// Checked for a changed mtime on every `.fips` query (one stat), so an
     /// edit in the app applies without a node restart.
     pub hosts: Option<Mutex<HostMapReloader>>,
+    /// Public domain names over fips (`names.rs`), `None` when off. Asked
+    /// before the upstreams for every non-`.fips` name; `None` from it
+    /// means "not over fips" and the query goes upstream unchanged.
+    pub names: Option<Arc<dyn crate::names::Lookup>>,
 }
 
 /// Reloader for the hosts file at `path` (see [`DnsProxy::hosts`]). A file
@@ -111,6 +117,10 @@ impl DnsProxy {
                 None => tracing::warn!(qname = %qname, ".fips responder unreachable"),
             }
             resp
+        } else if let Some(answer) = self.names.as_ref().and_then(|n| n.lookup(query.payload)) {
+            // Rare and load-bearing, like `.fips`: say so at info.
+            tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name answered over fips");
+            Some(answer)
         } else {
             self.upstreams
                 .iter()
@@ -364,6 +374,7 @@ mod tests {
             writer_tx,
             protect: None,
             hosts: None,
+            names: None,
         });
 
         let our = [0xfd; 16];
@@ -395,6 +406,7 @@ mod tests {
             writer_tx,
             protect: None,
             hosts: None,
+            names: None,
         });
         let our = [0xfd; 16];
         let mut phone = [0xfd; 16];
@@ -461,6 +473,7 @@ mod tests {
             writer_tx,
             protect: None,
             hosts: hosts_reloader(path.to_str()),
+            names: None,
         });
 
         let query = typed_query_for("Home.fips", TYPE_AAAA);
@@ -493,6 +506,51 @@ mod tests {
         assert_eq!(addr(&ask(&proxy, &replies, &query)), moved.address);
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// A public name the names resolver answers must come back wrapped
+    /// for the app — with the upstreams never asked — and one it declines
+    /// must go upstream exactly as before.
+    #[test]
+    fn public_names_answer_before_upstreams_and_fall_through() {
+        struct Bound;
+        impl crate::names::Lookup for Bound {
+            fn lookup(&self, query: &[u8]) -> Option<Vec<u8>> {
+                let q = names_core::synth::parse_query(query)?;
+                (q.name == "www.example.org")
+                    .then(|| names_core::synth::build_answer(&q, names_core::Npub::from_bytes([7; 32]), 30))
+                    .flatten()
+            }
+        }
+        // An upstream that would answer anything it is asked, so a leak of
+        // the bound name is visible as an answer with the wrong shape.
+        let upstream = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let upstream_addr = upstream.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = upstream.recv_from(&mut buf) {
+                buf[2] |= 0x80;
+                buf[3] = (buf[3] & 0xf0) | 3; // NXDOMAIN: the upstream's voice
+                let _ = upstream.send_to(&buf[..n], from);
+            }
+        });
+        let (writer_tx, replies) = std::sync::mpsc::channel();
+        let proxy = Arc::new(DnsProxy {
+            local_responder: "[::1]:1".parse().unwrap(),
+            upstreams: vec![upstream_addr],
+            writer_tx,
+            protect: None,
+            hosts: None,
+            names: Some(Arc::new(Bound)),
+        });
+        let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", TYPE_AAAA));
+        assert_eq!(reply[3] & 0x0f, 0, "answered over fips, not by the upstream");
+        assert_eq!(reply[6..8], [0, 2], "CNAME + AAAA");
+        let fd: [u8; 16] = reply[reply.len() - 16..].try_into().unwrap();
+        assert_eq!(fd, names_core::Npub::from_bytes([7; 32]).fips_address().octets());
+
+        let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", TYPE_AAAA));
+        assert_eq!(reply[3] & 0x0f, 3, "not over fips: the upstream's answer");
     }
 
     /// A reply that does not parse must become SERVFAIL, not a panic.

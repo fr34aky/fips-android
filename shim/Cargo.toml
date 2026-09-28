@@ -23,11 +23,17 @@ crate-type = ["cdylib", "lib"]
 fips = { git = "https://github.com/fr34aky/fips", rev = "f4a811e", default-features = false }
 ipstack = "1"
 jni = "0.21"
+# Public domain names over fips (www.example.org → a mesh node): the policy
+# core and the resolver adapters from fr34aky/fips-names, pinned like fips.
+# The phone-only parts (mesh transport, responder registration) are
+# names.rs / meshudp.rs here.
+names-core = { git = "https://github.com/fr34aky/fips-names", rev = "a354500" }
+names-resolve = { git = "https://github.com/fr34aky/fips-names", rev = "a354500" }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-smoltcp = { version = "0.14.0", default-features = false, features = ["std", "medium-ip", "proto-ipv6", "socket-tcp"] }
+smoltcp = { version = "0.14.0", default-features = false, features = ["std", "medium-ip", "proto-ipv6", "socket-tcp", "socket-udp"] }
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
