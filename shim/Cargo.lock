@@ -2811,7 +2811,7 @@ checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 [[package]]
 name = "pubdom-core"
 version = "0.1.0"
-source = "git+https://github.com/fr34aky/fips-pub-domains?rev=92835a6#92835a6b275d8322616847d194737e5223b4f2e5"
+source = "git+https://github.com/fr34aky/fips-pub-domains?rev=130094f#130094fa970f6dfaad124da0c64dce7e787838fd"
 dependencies = [
  "bech32 0.11.1",
  "hex",
@@ -2826,7 +2826,7 @@ dependencies = [
 [[package]]
 name = "pubdom-resolve"
 version = "0.1.0"
-source = "git+https://github.com/fr34aky/fips-pub-domains?rev=92835a6#92835a6b275d8322616847d194737e5223b4f2e5"
+source = "git+https://github.com/fr34aky/fips-pub-domains?rev=130094f#130094fa970f6dfaad124da0c64dce7e787838fd"
 dependencies = [
  "futures",
  "hickory-resolver",

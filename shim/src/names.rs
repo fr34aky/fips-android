@@ -22,7 +22,7 @@ use pubdom_resolve::config::MaybeTxt;
 use pubdom_resolve::mesh::MeshDns;
 use pubdom_resolve::relay::RelayClient;
 use pubdom_resolve::resolver::{LookupResult, Resolver, ResolverConfig};
-use pubdom_resolve::{FilePinStore, TxtVerifier};
+use pubdom_resolve::FilePinStore;
 
 use crate::config::ShimConfig;
 use crate::meshhttp::MeshLink;
@@ -71,10 +71,13 @@ impl Names {
             ..ResolverConfig::default()
         };
         let pins = FilePinStore::open(pins_path).map_err(|e| format!("pins {pins_path}: {e}"))?;
+        // The upstreams are fixed for the engine's lifetime: a network change
+        // rebinds the whole engine with a fresh config, so nothing swaps them
+        // at run time here.
+        let txt = MaybeTxt::new(&upstreams, rc.dnssec, rc.txt_timeout)?;
         let resolver = rt.block_on(async {
-            let txt = TxtVerifier::new(&upstreams, rc.dnssec, rc.txt_timeout).ok();
             let relays = RelayClient::new(&rc.public_relays, &rc.mesh_relays, rc.relay_timeout).await;
-            Resolver::new(rc, Arc::new(pins), MaybeTxt(txt), relays, Arc::new(PhoneMesh { link }))
+            Resolver::new(rc, Arc::new(pins), txt, relays, Arc::new(PhoneMesh { link }))
         });
         Ok(Arc::new(Self { rt: Some(rt), resolver: Arc::new(resolver) }))
     }
