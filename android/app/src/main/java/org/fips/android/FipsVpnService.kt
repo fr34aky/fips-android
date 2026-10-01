@@ -384,6 +384,8 @@ class FipsVpnService : VpnService() {
             pfd.close()
         } else {
             Log.i(TAG, "fips engine running, address $address, ipv6Clearnet=$wantIpv6")
+            // The resolver starts assuming online; give it the real answer.
+            pushNamesOnline(force = true)
             registerNetworkMonitoring()
             startHotspot()
             HostsSync.onConnected(this)
@@ -844,6 +846,36 @@ class FipsVpnService : VpnService() {
 
     private val availableNetworks = LinkedHashSet<Network>()
 
+    /** The last Internet flag told to the public-names resolver, if any. */
+    @Volatile private var namesOnline: Boolean? = null
+
+    /**
+     * Whether any non-hotspot network is validated: Android's captive-portal
+     * check passed, so legacy DNS and public relays are reachable. A network
+     * that merely has the INTERNET capability may be a Wi-Fi whose router
+     * blocks us (seen on the test phone: the resolver then waited out every
+     * TXT timeout). Only the resolver gets this; the node's own routing is
+     * untouched.
+     */
+    private fun internetValidated(): Boolean {
+        val cm = connectivity ?: return false
+        val snapshot = synchronized(availableNetworks) { availableNetworks.toList() }
+        return snapshot.filter { it != hotspotNetwork }.any { net ->
+            cm.getNetworkCapabilities(net)
+                ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        }
+    }
+
+    /** Tell the resolver when the Internet flag changed (or on `force`). */
+    private fun pushNamesOnline(force: Boolean = false) {
+        val now = internetValidated()
+        if (force || namesOnline != now) {
+            namesOnline = now
+            Log.i(TAG, "public names: internet ${if (now) "validated" else "not validated"}")
+            FipsNative.namesOnline(now)
+        }
+    }
+
     /**
      * Watch the underlying (non-VPN) internet networks. On a switch
      * (Wi-Fi ↔ cellular) the node's UDP socket keeps a stale binding and the
@@ -918,6 +950,9 @@ class FipsVpnService : VpnService() {
     }
 
     private fun updateUnderlying() {
+        // Validation flips without the preferred network changing (a Wi-Fi
+        // losing its Internet keeps its transport), so this comes first.
+        pushNamesOnline()
         val network = preferredUnderlying() ?: return
         onUnderlyingNetwork(network)
     }

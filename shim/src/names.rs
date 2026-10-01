@@ -146,6 +146,15 @@ impl Names {
     pub fn network_changed(&self) {
         self.resolver.flush_caches();
     }
+
+    /// What the VpnService knows and the resolver cannot: whether a
+    /// validated Internet network exists. Offline, the resolver skips the
+    /// TXT lookup instead of waiting out its timeout, so a first lookup
+    /// through a mesh relay fits the budget rather than resolving only on
+    /// the retry. The resolver flushes its decisions when this changes.
+    pub fn set_online(&self, online: bool) {
+        self.resolver.set_online(online);
+    }
 }
 
 impl Lookup for Names {

@@ -492,6 +492,19 @@ pub fn network_hint() {
     }
 }
 
+/// The public-names resolver's view of the Internet: Kotlin calls this
+/// with whether a validated (captive-portal-free) Internet network exists,
+/// at start and whenever that changes. No-op when not running or names are
+/// off.
+pub fn names_online(online: bool) {
+    let slot = ENGINE.lock().unwrap();
+    if let Some(engine) = slot.as_ref()
+        && let Some(names) = &engine.names
+    {
+        names.set_online(online);
+    }
+}
+
 /// Compact status JSON for the UI. Always answers, running or not. `relays`
 /// lists the Nostr relay pool with per-relay connection state (empty when
 /// Nostr is off or the node has not published a snapshot yet); each call
