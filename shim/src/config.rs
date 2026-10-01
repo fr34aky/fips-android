@@ -463,6 +463,28 @@ impl ShimConfig {
 mod tests {
     use super::*;
 
+    /// The public-names knobs the app sends: absent means the library's
+    /// defaults (no witnesses, k left to the resolver), present is taken
+    /// as is — the JSON contract with `ConfigStore.buildConfigJson`.
+    #[test]
+    fn names_knobs_parse_absent_and_present() {
+        let nsec = derive_identity("").unwrap().nsec;
+        let base = format!(r#"{{"nsec": "{nsec}""#);
+        let c = ShimConfig::from_json(&format!("{base}}}")).unwrap();
+        assert!(c.names_pins_path.is_none());
+        assert!(c.names_witnesses.is_empty());
+        assert_eq!(c.names_attestation_threshold, None);
+        let c = ShimConfig::from_json(&format!(
+            r#"{base}, "names_pins_path": "/p/pins.json", "names_mesh_relays": ["ws://x.fips:80"],
+                "names_witnesses": ["npub1abc", "not-an-npub"], "names_attestation_threshold": 1}}"#
+        ))
+        .unwrap();
+        assert_eq!(c.names_pins_path.as_deref(), Some("/p/pins.json"));
+        assert_eq!(c.names_mesh_relays, vec!["ws://x.fips:80"]);
+        assert_eq!(c.names_witnesses.len(), 2, "validated by names.rs, not here");
+        assert_eq!(c.names_attestation_threshold, Some(1));
+    }
+
     #[test]
     fn identity_roundtrip() {
         let generated = derive_identity("").unwrap();

@@ -177,15 +177,33 @@ class SettingsFragment : Fragment() {
         }
         relays.doAfterTextChanged { showInvalid() }
         showInvalid()
+        // Witnesses: invalid lines, a list without a mesh relay to read
+        // attestations from, and a k no list could reach are each a silent
+        // no-op in the shim — say so here.
         val witnesses = edit(view, R.id.names_witnesses)
-        val showInvalidWitnesses = {
-            val bad = CS.invalidWitnesses(witnesses.text.toString())
-            view.findViewById<TextInputLayout>(R.id.names_witnesses_layout).error =
-                if (bad.isEmpty()) null
-                else "Not an npub1… key, ignored: " + bad.joinToString(", ")
+        val k = edit(view, R.id.names_attestation_k)
+        val showWitnessState = {
+            val text = witnesses.text.toString()
+            val bad = CS.invalidWitnesses(text)
+            val valid = CS.validWitnesses(text)
+            val relays = CS.invalidMeshRelays(relays.text.toString()).isEmpty() &&
+                relays.text.toString().lines().any { CS.normalizeMeshRelay(it) != null }
+            view.findViewById<TextInputLayout>(R.id.names_witnesses_layout).error = when {
+                bad.isNotEmpty() -> "Not an npub1… key, ignored: " + bad.joinToString(", ")
+                valid.isNotEmpty() && !relays ->
+                    "Attestations are read from the mesh relays above; add one"
+                else -> null
+            }
+            val threshold = CS.parseAttestationThreshold(k.text.toString())
+            view.findViewById<TextInputLayout>(R.id.names_attestation_k_layout).error =
+                if (valid.isNotEmpty() && threshold > valid.size)
+                    "More than the ${valid.size} witness(es) listed: attestations can never count"
+                else null
         }
-        witnesses.doAfterTextChanged { showInvalidWitnesses() }
-        showInvalidWitnesses()
+        witnesses.doAfterTextChanged { showWitnessState() }
+        k.doAfterTextChanged { showWitnessState() }
+        relays.doAfterTextChanged { showWitnessState() }
+        showWitnessState()
         syncSaveButton(view)
     }
 
@@ -211,8 +229,7 @@ class SettingsFragment : Fragment() {
             sw(view, R.id.public_names).isChecked != CS.publicNames(requireContext()) ||
             e(R.id.names_mesh_relays) != p.getString(CS.NAMES_MESH_RELAYS, "") ||
             e(R.id.names_witnesses) != p.getString(CS.NAMES_WITNESSES, "") ||
-            (e(R.id.names_attestation_k).toIntOrNull() ?: CS.DEF_NAMES_ATTESTATION_K)
-                .coerceIn(0, CS.MAX_RELAYS) !=
+            CS.parseAttestationThreshold(e(R.id.names_attestation_k)) !=
             p.getInt(CS.NAMES_ATTESTATION_K, CS.DEF_NAMES_ATTESTATION_K) ||
             sw(view, R.id.nostr_discovery).isChecked !=
             p.getBoolean(CS.NOSTR_DISCOVERY, CS.DEF_NOSTR_DISCOVERY) ||
@@ -365,8 +382,7 @@ class SettingsFragment : Fragment() {
             .putString(CS.NAMES_WITNESSES, edit(view, R.id.names_witnesses).text.toString().trim())
             .putInt(
                 CS.NAMES_ATTESTATION_K,
-                (edit(view, R.id.names_attestation_k).text.toString().trim().toIntOrNull()
-                    ?: CS.DEF_NAMES_ATTESTATION_K).coerceIn(0, CS.MAX_RELAYS)
+                CS.parseAttestationThreshold(edit(view, R.id.names_attestation_k).text.toString())
             )
             .putBoolean(CS.NOSTR_DISCOVERY, sw(view, R.id.nostr_discovery).isChecked)
             .putBoolean(CS.BOOTSTRAP_FALLBACKS, sw(view, R.id.bootstrap_fallbacks).isChecked)

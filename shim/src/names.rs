@@ -99,13 +99,16 @@ impl Names {
         // A witness that does not parse is dropped with a warning rather
         // than failing the start: the app validates on the way out, and a
         // name-resolution feature must not keep the tunnel from coming up.
+        // The line itself is not logged: the log ring is shareable from
+        // Diagnostics, and a pasted secret must not end up in it.
         let witnesses: Vec<Npub> = config
             .names_witnesses
             .iter()
-            .filter_map(|w| match Npub::parse_any(w.trim()) {
+            .enumerate()
+            .filter_map(|(i, w)| match Npub::parse_any(w.trim()) {
                 Ok(n) => Some(n),
                 Err(e) => {
-                    tracing::warn!(witness = %w, error = %e, "ignoring witness: not an npub");
+                    tracing::warn!(line = i + 1, len = w.len(), error = %e, "ignoring witness: not an npub");
                     None
                 }
             })

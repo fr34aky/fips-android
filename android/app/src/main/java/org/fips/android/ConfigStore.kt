@@ -262,18 +262,35 @@ object ConfigStore {
     fun invalidMeshRelays(text: String): List<String> =
         text.lines().map { it.trim() }.filter { it.isNotEmpty() && normalizeMeshRelay(it) == null }
 
-    /** The witnesses for public names, validated npubs; at most [MAX_RELAYS]. */
+    /** Witnesses a phone can usefully list; k is bounded by it too. */
+    const val MAX_WITNESSES = 8
+
+    /** The witnesses for public names, validated npubs; at most [MAX_WITNESSES]. */
     fun witnesses(context: Context): List<String> =
-        (prefs(context).getString(NAMES_WITNESSES, "") ?: "").lines()
-            .map { it.trim() }.filter { isNpub(it) }.distinct().take(MAX_RELAYS)
+        validWitnesses(prefs(context).getString(NAMES_WITNESSES, "") ?: "")
+
+    fun validWitnesses(text: String): List<String> =
+        text.lines().map { it.trim() }.filter { isNpub(it) }.distinct().take(MAX_WITNESSES)
 
     /** Lines of [text] that are not an npub (for the Settings hint). */
     fun invalidWitnesses(text: String): List<String> =
         text.lines().map { it.trim() }.filter { it.isNotEmpty() && !isNpub(it) }
 
-    /** k, clamped to what makes sense: 0 (off) to [MAX_RELAYS]. */
+    /**
+     * k as typed in Settings: blank is the default, anything else clamped
+     * to 0 (off) .. [MAX_WITNESSES]. One parser for save and for the
+     * unsaved-changes check, so the two cannot drift.
+     */
+    fun parseAttestationThreshold(text: String): Int {
+        val t = text.trim()
+        if (t.isEmpty()) return DEF_NAMES_ATTESTATION_K
+        val n = t.toLongOrNull() ?: return DEF_NAMES_ATTESTATION_K
+        return n.coerceIn(0L, MAX_WITNESSES.toLong()).toInt()
+    }
+
+    /** k, clamped to what makes sense: 0 (off) to [MAX_WITNESSES]. */
     fun attestationThreshold(context: Context): Int =
-        prefs(context).getInt(NAMES_ATTESTATION_K, DEF_NAMES_ATTESTATION_K).coerceIn(0, MAX_RELAYS)
+        prefs(context).getInt(NAMES_ATTESTATION_K, DEF_NAMES_ATTESTATION_K).coerceIn(0, MAX_WITNESSES)
 
     private const val BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
