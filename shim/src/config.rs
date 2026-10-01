@@ -141,9 +141,9 @@ pub struct ShimConfig {
     pub names_attestation_threshold: Option<usize>,
     /// Validate the `_fips-dns` TXT record with DNSSEC and accept the DNSSEC
     /// proof carried in a claim (fips-pub-domains spec §4, §5.5). Off, the
-    /// record is verified by agreeing resolvers only and a domain never
-    /// seen resolves offline through witnesses alone. Absent: the library
-    /// default (on).
+    /// record is taken from plain DNS answers (one resolver's suffices,
+    /// method `dns-single`) and a domain never seen resolves offline
+    /// through witnesses alone. Absent: the library default (on).
     #[serde(default)]
     pub names_dnssec: Option<bool>,
     /// Advanced: a full `fips.yaml`. When non-empty it becomes the base

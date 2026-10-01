@@ -203,7 +203,17 @@
                     android:text="DNSSEC for public names" />
                 <TextView
                     style="@style/Widget.Fips.Summary"
-                    android:text="Validate a domain\'s DNS record with DNSSEC and accept the DNSSEC proof carried in its claim, which lets a domain never seen verify without internet. Leave this on. Off, the record counts only when two resolvers agree, and without internet only the witnesses above vouch — useful to test them." />
+                    android:text="Validate a domain\'s DNS record with DNSSEC and accept the DNSSEC proof carried in its claim, which lets a domain never seen verify without internet. Leave this on. Off, the record is taken from plain DNS answers, and without internet only the witnesses above vouch — useful to test them." />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/names_forget_pins"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Forget verified domains" />
+                <TextView
+                    style="@style/Widget.Fips.Summary"
+                    android:text="Drops every domain verified so far; each is verified again at its next lookup — from its DNS record, its claim\'s proof, or the witnesses. Reconnect to apply." />
                 <View style="@style/Widget.Fips.Divider" />
                 <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/hotspot"

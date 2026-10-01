@@ -195,15 +195,32 @@ class SettingsFragment : Fragment() {
                 else -> null
             }
             val threshold = CS.parseAttestationThreshold(k.text.toString())
-            view.findViewById<TextInputLayout>(R.id.names_attestation_k_layout).error =
-                if (valid.isNotEmpty() && threshold > valid.size)
+            view.findViewById<TextInputLayout>(R.id.names_attestation_k_layout).error = when {
+                valid.isNotEmpty() && threshold > valid.size ->
                     "More than the ${valid.size} witness(es) listed: attestations can never count"
-                else null
+                // With the proof path closed, witnesses are the only way a
+                // domain never seen verifies offline.
+                !sw(view, R.id.names_dnssec).isChecked && (valid.isEmpty() || threshold == 0) ->
+                    "DNSSEC is off: without witnesses nothing verifies a new domain offline"
+                else -> null
+            }
         }
         witnesses.doAfterTextChanged { showWitnessState() }
         k.doAfterTextChanged { showWitnessState() }
         relays.doAfterTextChanged { showWitnessState() }
+        sw(view, R.id.names_dnssec).setOnCheckedChangeListener { _, _ ->
+            showWitnessState()
+            syncSaveButton(view)
+        }
         showWitnessState()
+        view.findViewById<View>(R.id.names_forget_pins).setOnClickListener { v ->
+            val gone = CS.forgetNamesPins(requireContext())
+            Ui.snack(
+                v,
+                if (gone) "Verified domains forgotten; reconnect to apply"
+                else "No verified domains stored"
+            )
+        }
         syncSaveButton(view)
     }
 

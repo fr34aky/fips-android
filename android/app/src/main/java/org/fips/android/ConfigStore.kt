@@ -381,6 +381,18 @@ object ConfigStore {
 
     /** Public domain names over fips, honouring the default. */
     fun publicNames(context: Context) = prefs(context).getBoolean(PUBLIC_NAMES, DEF_PUBLIC_NAMES)
+
+    /** The verified-domain pins (fips-pub-domains' pin file), next to the hosts file. */
+    fun namesPinsFile(context: Context): java.io.File =
+        HostsStore.file(context).resolveSibling("names-pins.json")
+
+    /**
+     * Forget every verified domain: the next lookup verifies again from the
+     * DNS record, a claim's proof, or the witnesses. Takes effect on the
+     * next connect, which rebuilds the resolver over an absent file; the
+     * running one keeps its pins in memory until then.
+     */
+    fun forgetNamesPins(context: Context): Boolean = namesPinsFile(context).delete()
     fun namesDnssec(context: Context) = prefs(context).getBoolean(NAMES_DNSSEC, DEF_NAMES_DNSSEC)
 
     /** FIPS Hotspot auto-join, honouring the default. */
@@ -453,7 +465,7 @@ object ConfigStore {
         // Sending the path is what turns the feature on in the shim; a name
         // without a verified binding is forwarded to the upstreams as before.
         if (publicNames(context)) {
-            config.put("names_pins_path", HostsStore.file(context).resolveSibling("names-pins.json").absolutePath)
+            config.put("names_pins_path", namesPinsFile(context).absolutePath)
             meshRelays(context).takeIf { it.isNotEmpty() }?.let {
                 config.put("names_mesh_relays", JSONArray(it))
             }
@@ -463,8 +475,9 @@ object ConfigStore {
                 config.put("names_witnesses", JSONArray(it))
                 config.put("names_attestation_threshold", attestationThreshold(context))
             }
-            // Only the non-default is sent: absent means the library's on.
-            if (!namesDnssec(context)) config.put("names_dnssec", false)
+            // Sent whenever public names are on, so the switch means what
+            // it shows whatever the library's default becomes.
+            config.put("names_dnssec", namesDnssec(context))
         }
 
         // Only a customised list is sent; omitted → fips's built-in relays
