@@ -96,15 +96,37 @@ impl Names {
             .into_iter()
             .map(|a| a.ip())
             .collect();
+        // A witness that does not parse is dropped with a warning rather
+        // than failing the start: the app validates on the way out, and a
+        // name-resolution feature must not keep the tunnel from coming up.
+        // The line itself is not logged: the log ring is shareable from
+        // Diagnostics, and a pasted secret must not end up in it.
+        let witnesses: Vec<Npub> = config
+            .names_witnesses
+            .iter()
+            .enumerate()
+            .filter_map(|(i, w)| match Npub::parse_any(w.trim()) {
+                Ok(n) => Some(n),
+                Err(e) => {
+                    tracing::warn!(line = i + 1, len = w.len(), error = %e, "ignoring witness: not an npub");
+                    None
+                }
+            })
+            .collect();
+        let defaults = ResolverConfig::default();
         let rc = ResolverConfig {
             public_relays: if config.nostr_relays.is_empty() {
-                ResolverConfig::default().public_relays
+                defaults.public_relays.clone()
             } else {
                 config.nostr_relays.clone()
             },
             mesh_relays: proxies.iter().map(|p| p.local_url.clone()).collect(),
             allow_unverified_offline: config.names_allow_unverified_offline,
-            ..ResolverConfig::default()
+            witnesses,
+            attestation_threshold: config
+                .names_attestation_threshold
+                .unwrap_or(defaults.attestation_threshold),
+            ..defaults
         };
         let pins = FilePinStore::open(pins_path).map_err(|e| format!("pins {pins_path}: {e}"))?;
         // The upstreams are fixed for the engine's lifetime: a network change

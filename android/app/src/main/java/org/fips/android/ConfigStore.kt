@@ -32,6 +32,15 @@ object ConfigStore {
      * line, as typed; [meshRelays] validates on the way out. Blank = none.
      */
     const val NAMES_MESH_RELAYS = "names_mesh_relays"
+    /**
+     * Witnesses for public names, one `npub1…` per line, as typed;
+     * [witnesses] validates on the way out. Their attestations let a domain
+     * never seen resolve offline when its claim carries no DNSSEC proof.
+     * Blank = attestations unused.
+     */
+    const val NAMES_WITNESSES = "names_witnesses"
+    /** How many witnesses must attest a server (k). */
+    const val NAMES_ATTESTATION_K = "names_attestation_k"
     const val HOTSPOT = "hotspot_enabled"
     const val INBOUND_FILTER = "inbound_filter"
     const val INBOUND_PORTS = "inbound_ports"
@@ -101,6 +110,8 @@ object ConfigStore {
     const val DEF_BATTERY_SAVER = true
     const val DEF_LAN_MDNS = true
     const val DEF_PUBLIC_NAMES = true
+    /** The library's default too (pubdom-resolve `ResolverConfig`). */
+    const val DEF_NAMES_ATTESTATION_K = 2
     const val DEF_HOTSPOT = true
     const val DEF_AUTO_UPDATE = true
     const val DEF_FORWARD_CLEARNET = true
@@ -250,6 +261,36 @@ object ConfigStore {
     /** Lines of [text] that are not a valid mesh relay (for the Settings hint). */
     fun invalidMeshRelays(text: String): List<String> =
         text.lines().map { it.trim() }.filter { it.isNotEmpty() && normalizeMeshRelay(it) == null }
+
+    /** Witnesses a phone can usefully list; k is bounded by it too. */
+    const val MAX_WITNESSES = 8
+
+    /** The witnesses for public names, validated npubs; at most [MAX_WITNESSES]. */
+    fun witnesses(context: Context): List<String> =
+        validWitnesses(prefs(context).getString(NAMES_WITNESSES, "") ?: "")
+
+    fun validWitnesses(text: String): List<String> =
+        text.lines().map { it.trim() }.filter { isNpub(it) }.distinct().take(MAX_WITNESSES)
+
+    /** Lines of [text] that are not an npub (for the Settings hint). */
+    fun invalidWitnesses(text: String): List<String> =
+        text.lines().map { it.trim() }.filter { it.isNotEmpty() && !isNpub(it) }
+
+    /**
+     * k as typed in Settings: blank is the default, anything else clamped
+     * to 0 (off) .. [MAX_WITNESSES]. One parser for save and for the
+     * unsaved-changes check, so the two cannot drift.
+     */
+    fun parseAttestationThreshold(text: String): Int {
+        val t = text.trim()
+        if (t.isEmpty()) return DEF_NAMES_ATTESTATION_K
+        val n = t.toLongOrNull() ?: return DEF_NAMES_ATTESTATION_K
+        return n.coerceIn(0L, MAX_WITNESSES.toLong()).toInt()
+    }
+
+    /** k, clamped to what makes sense: 0 (off) to [MAX_WITNESSES]. */
+    fun attestationThreshold(context: Context): Int =
+        prefs(context).getInt(NAMES_ATTESTATION_K, DEF_NAMES_ATTESTATION_K).coerceIn(0, MAX_WITNESSES)
 
     private const val BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
@@ -407,6 +448,12 @@ object ConfigStore {
             config.put("names_pins_path", HostsStore.file(context).resolveSibling("names-pins.json").absolutePath)
             meshRelays(context).takeIf { it.isNotEmpty() }?.let {
                 config.put("names_mesh_relays", JSONArray(it))
+            }
+            // Witnesses only with k: the shim's default for k is the
+            // library's, so k is sent whenever the list is.
+            witnesses(context).takeIf { it.isNotEmpty() }?.let {
+                config.put("names_witnesses", JSONArray(it))
+                config.put("names_attestation_threshold", attestationThreshold(context))
             }
         }
 

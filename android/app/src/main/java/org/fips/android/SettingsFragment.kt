@@ -177,6 +177,33 @@ class SettingsFragment : Fragment() {
         }
         relays.doAfterTextChanged { showInvalid() }
         showInvalid()
+        // Witnesses: invalid lines, a list without a mesh relay to read
+        // attestations from, and a k no list could reach are each a silent
+        // no-op in the shim — say so here.
+        val witnesses = edit(view, R.id.names_witnesses)
+        val k = edit(view, R.id.names_attestation_k)
+        val showWitnessState = {
+            val text = witnesses.text.toString()
+            val bad = CS.invalidWitnesses(text)
+            val valid = CS.validWitnesses(text)
+            val relays = CS.invalidMeshRelays(relays.text.toString()).isEmpty() &&
+                relays.text.toString().lines().any { CS.normalizeMeshRelay(it) != null }
+            view.findViewById<TextInputLayout>(R.id.names_witnesses_layout).error = when {
+                bad.isNotEmpty() -> "Not an npub1… key, ignored: " + bad.joinToString(", ")
+                valid.isNotEmpty() && !relays ->
+                    "Attestations are read from the mesh relays above; add one"
+                else -> null
+            }
+            val threshold = CS.parseAttestationThreshold(k.text.toString())
+            view.findViewById<TextInputLayout>(R.id.names_attestation_k_layout).error =
+                if (valid.isNotEmpty() && threshold > valid.size)
+                    "More than the ${valid.size} witness(es) listed: attestations can never count"
+                else null
+        }
+        witnesses.doAfterTextChanged { showWitnessState() }
+        k.doAfterTextChanged { showWitnessState() }
+        relays.doAfterTextChanged { showWitnessState() }
+        showWitnessState()
         syncSaveButton(view)
     }
 
@@ -201,6 +228,9 @@ class SettingsFragment : Fragment() {
             sw(view, R.id.lan_mdns).isChecked != CS.lanMdns(requireContext()) ||
             sw(view, R.id.public_names).isChecked != CS.publicNames(requireContext()) ||
             e(R.id.names_mesh_relays) != p.getString(CS.NAMES_MESH_RELAYS, "") ||
+            e(R.id.names_witnesses) != p.getString(CS.NAMES_WITNESSES, "") ||
+            CS.parseAttestationThreshold(e(R.id.names_attestation_k)) !=
+            p.getInt(CS.NAMES_ATTESTATION_K, CS.DEF_NAMES_ATTESTATION_K) ||
             sw(view, R.id.nostr_discovery).isChecked !=
             p.getBoolean(CS.NOSTR_DISCOVERY, CS.DEF_NOSTR_DISCOVERY) ||
             sw(view, R.id.bootstrap_fallbacks).isChecked !=
@@ -309,6 +339,9 @@ class SettingsFragment : Fragment() {
             p.getBoolean(CS.INBOUND_FILTER, CS.DEF_INBOUND_FILTER)
         edit(view, R.id.inbound_ports).setText(p.getString(CS.INBOUND_PORTS, ""))
         edit(view, R.id.names_mesh_relays).setText(p.getString(CS.NAMES_MESH_RELAYS, ""))
+        edit(view, R.id.names_witnesses).setText(p.getString(CS.NAMES_WITNESSES, ""))
+        edit(view, R.id.names_attestation_k)
+            .setText(p.getInt(CS.NAMES_ATTESTATION_K, CS.DEF_NAMES_ATTESTATION_K).toString())
         sw(view, R.id.battery_saver).isChecked =
             p.getBoolean(CS.BATTERY_SAVER, CS.DEF_BATTERY_SAVER)
         sw(view, R.id.lan_mdns).isChecked = CS.lanMdns(requireContext())
@@ -346,6 +379,11 @@ class SettingsFragment : Fragment() {
             .putBoolean(CS.LAN_MDNS, sw(view, R.id.lan_mdns).isChecked)
             .putBoolean(CS.PUBLIC_NAMES, sw(view, R.id.public_names).isChecked)
             .putString(CS.NAMES_MESH_RELAYS, edit(view, R.id.names_mesh_relays).text.toString().trim())
+            .putString(CS.NAMES_WITNESSES, edit(view, R.id.names_witnesses).text.toString().trim())
+            .putInt(
+                CS.NAMES_ATTESTATION_K,
+                CS.parseAttestationThreshold(edit(view, R.id.names_attestation_k).text.toString())
+            )
             .putBoolean(CS.NOSTR_DISCOVERY, sw(view, R.id.nostr_discovery).isChecked)
             .putBoolean(CS.BOOTSTRAP_FALLBACKS, sw(view, R.id.bootstrap_fallbacks).isChecked)
             .putBoolean(CS.HOTSPOT, sw(view, R.id.hotspot).isChecked)
@@ -371,6 +409,7 @@ class SettingsFragment : Fragment() {
         val TEXT_FIELDS = intArrayOf(
             R.id.peer_npub, R.id.peer_endpoint, R.id.peer_transport, R.id.inbound_ports,
             R.id.worker_threads, R.id.log_level, R.id.names_mesh_relays,
+            R.id.names_witnesses, R.id.names_attestation_k,
         )
     }
 }

@@ -166,6 +166,36 @@
                 <TextView
                     style="@style/Widget.Fips.Summary"
                     android:text="Nostr relays running on fips nodes, one per line: ws://npub1….fips:port. They reach this phone over the mesh, so a domain whose claim carries a DNSSEC proof can be verified there even without internet and without having seen it before. Blank: none." />
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/names_witnesses_layout"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="Witnesses for public names">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/names_witnesses"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textMultiLine|textNoSuggestions"
+                        android:minLines="1" />
+                </com.google.android.material.textfield.TextInputLayout>
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/names_attestation_k_layout"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="Witnesses that must agree">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/names_attestation_k"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="number" />
+                </com.google.android.material.textfield.TextInputLayout>
+                <TextView
+                    style="@style/Widget.Fips.Summary"
+                    android:text="Nodes you trust to have checked a domain online, one npub1… per line — your own other nodes, or a friend\'s. Without internet, a domain never seen whose claim carries no DNSSEC proof is used once this many of them vouch for its server, through the mesh relays above. Only these keys are asked for; blank: attestations are not used. 0 witnesses that must agree also turns them off." />
                 <View style="@style/Widget.Fips.Divider" />
                 <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/hotspot"
