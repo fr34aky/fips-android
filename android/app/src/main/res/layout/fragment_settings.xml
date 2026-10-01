@@ -203,7 +203,7 @@
                     android:text="Trust my Mesh names as witnesses" />
                 <TextView
                     style="@style/Widget.Fips.Summary"
-                    android:text="Also count the nodes in Mesh names — the node the names sync from and every name\'s node — as witnesses, on top of the ones typed above. Off by default: a node you trust to serve a name is not automatically one you trust to vouch for other domains." />
+                    android:text="Also count the nodes in Mesh names — the node the names sync from and every name\'s node — as witnesses, on top of the ones typed above. Off by default: a node you trust to serve a name is not automatically one you trust to vouch for other domains. A node never counts as a witness for its own domain. Applies at the next connect, so names synced later count from then on." />
                 <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/names_dnssec"
                     style="@style/Widget.Fips.SettingSwitch"

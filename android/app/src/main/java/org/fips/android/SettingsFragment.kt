@@ -183,13 +183,19 @@ class SettingsFragment : Fragment() {
         val witnesses = edit(view, R.id.names_witnesses)
         val k = edit(view, R.id.names_attestation_k)
         val fromHosts = sw(view, R.id.names_witnesses_from_hosts)
+        // The hosts file is read once per toggle or resume, not per keystroke.
+        hostWitnesses = CS.hostWitnesses(requireContext())
         val showWitnessState = {
             val text = witnesses.text.toString()
             val bad = CS.invalidWitnesses(text)
-            val hosts = if (fromHosts.isChecked) CS.hostWitnesses(requireContext()) else emptyList()
-            val valid = (CS.validWitnesses(text) + hosts).distinct()
-            fromHosts.text = if (hosts.isEmpty()) "Trust my Mesh names as witnesses"
-                else "Trust my Mesh names as witnesses (${hosts.size} nodes)"
+            val typed = CS.validWitnesses(text)
+            val hosts = if (fromHosts.isChecked) hostWitnesses else emptyList()
+            // Exactly what the shim would get, so the count and the k check
+            // agree with it.
+            val valid = CS.combinedWitnesses(typed, hosts)
+            val added = valid.size - typed.size
+            fromHosts.text = if (added > 0) "$WITNESSES_FROM_HOSTS_LABEL (adds $added)"
+                else WITNESSES_FROM_HOSTS_LABEL
             val relays = CS.invalidMeshRelays(relays.text.toString()).isEmpty() &&
                 relays.text.toString().lines().any { CS.normalizeMeshRelay(it) != null }
             view.findViewById<TextInputLayout>(R.id.names_witnesses_layout).error = when {
@@ -217,8 +223,13 @@ class SettingsFragment : Fragment() {
             syncSaveButton(view)
         }
         fromHosts.setOnCheckedChangeListener { _, _ ->
+            hostWitnesses = CS.hostWitnesses(requireContext())
             showWitnessState()
             syncSaveButton(view)
+        }
+        refreshWitnessState = {
+            hostWitnesses = CS.hostWitnesses(requireContext())
+            showWitnessState()
         }
         showWitnessState()
         view.findViewById<View>(R.id.names_forget_pins).setOnClickListener { v ->
@@ -230,6 +241,18 @@ class SettingsFragment : Fragment() {
             )
         }
         syncSaveButton(view)
+    }
+
+    /** The hosts file's witnesses, cached for the state hints. */
+    private var hostWitnesses: List<String> = emptyList()
+
+    /** Re-reads the hosts file into the witness hints; set by watchForEdits. */
+    private var refreshWitnessState: (() -> Unit)? = null
+
+    override fun onResume() {
+        super.onResume()
+        // Mesh names may have changed meanwhile (an edit, a sync).
+        refreshWitnessState?.invoke()
     }
 
     private fun syncSaveButton(view: View) {
@@ -435,6 +458,8 @@ class SettingsFragment : Fragment() {
 
     private companion object {
         const val STATE_ADVANCED = "advanced_expanded"
+        /** Must match the switch's text in fragment_settings.xml. */
+        const val WITNESSES_FROM_HOSTS_LABEL = "Trust my Mesh names as witnesses"
 
         /** Every persisted widget; [watchForEdits] must see all of them. */
         val SWITCHES = intArrayOf(

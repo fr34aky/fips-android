@@ -288,20 +288,32 @@ object ConfigStore {
 
     /**
      * The witnesses the hosts file implies: the node the names sync from
-     * first, then each name's node, each once, in file order.
+     * (the configured source while the sync is on, else the one recorded
+     * in the file's synced block) first, then each name's node, each
+     * once, in file order. One read of the file. fips accepts an
+     * upper-case NPUB1… line, so the key is lower-cased before checking.
      */
     fun hostWitnesses(context: Context): List<String> {
+        val p = prefs(context)
+        val (master, hosts) = HostsStore.masterAndEffective(context)
+        val source = if (p.getBoolean(HOSTS_SYNC, DEF_HOSTS_SYNC)) p.getString(HOSTS_SYNC_FROM, "") else null
         val out = mutableListOf<String>()
-        HostsStore.loadSynced(context)?.master?.let { if (isNpub(it)) out += it }
-        for (h in HostsStore.effective(context)) if (isNpub(h.npub)) out += h.npub
+        for (candidate in listOf(source, master) + hosts.map { it.npub }) {
+            val n = candidate?.trim()?.lowercase() ?: continue
+            if (isNpub(n)) out += n
+        }
         return out.distinct()
     }
 
-    /** Every witness sent to the shim: the typed ones first, then — when
-     *  opted in — the hosts file's, capped at [MAX_WITNESSES_TOTAL]. */
+    /** Typed and (opt-in) hosts-file witnesses as one list: typed first,
+     *  each once, capped at [MAX_WITNESSES_TOTAL]. What the shim gets. */
+    fun combinedWitnesses(typed: List<String>, fromHosts: List<String>): List<String> =
+        (typed + fromHosts).distinct().take(MAX_WITNESSES_TOTAL)
+
+    /** Every witness sent to the shim, from the saved settings. */
     fun allWitnesses(context: Context): List<String> {
         val derived = if (namesWitnessesFromHosts(context)) hostWitnesses(context) else emptyList()
-        return (witnesses(context) + derived).distinct().take(MAX_WITNESSES_TOTAL)
+        return combinedWitnesses(witnesses(context), derived)
     }
 
     /** The witnesses for public names, validated npubs; at most [MAX_WITNESSES]. */
