@@ -12,9 +12,11 @@
 //! offline, a claim from a relay on the mesh whose DNSSEC proof verifies),
 //! step
 //! 3 to the domain's server over the mesh, and a synthesized answer with the
-//! node's `fd…` address. Everything else returns `None`, and the proxy
-//! forwards to the upstreams exactly as before: a name that is not over
-//! fips is never made unreachable by this code.
+//! node's `fd…` address. Everything else is [`Outcome::Legacy`], and the
+//! proxy forwards to the upstreams exactly as before — or
+//! [`Outcome::Pending`] when the lookup overran its budget and is still
+//! deciding, which forwards too but with the answer's TTLs capped. A name
+//! that is not over fips is never made unreachable by this code.
 
 use std::net::{IpAddr, SocketAddrV6, UdpSocket};
 use std::sync::Arc;

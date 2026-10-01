@@ -47,8 +47,10 @@ pub struct DnsProxy {
     /// edit in the app applies without a node restart.
     pub hosts: Option<Mutex<HostMapReloader>>,
     /// Public domain names over fips (`names.rs`), `None` when off. Asked
-    /// before the upstreams for every non-`.fips` name; `None` from it
-    /// means "not over fips" and the query goes upstream unchanged.
+    /// before the upstreams for every non-`.fips` name; `Legacy` from it
+    /// means "not over fips" and the query goes upstream unchanged,
+    /// `Pending` that it goes upstream but the answer's TTLs are capped
+    /// while the lookup is still deciding.
     pub names: Option<Arc<dyn crate::names::Lookup>>,
 }
 
@@ -119,27 +121,30 @@ impl DnsProxy {
             resp
         } else {
             use crate::names::Outcome;
-            let (answer, pending) = match self.names.as_ref().map(|n| n.lookup(query.payload)) {
+            let forward = || {
+                self.upstreams
+                    .iter()
+                    .find_map(|&upstream| self.forward(query.payload, upstream, true))
+            };
+            match self.names.as_ref().map(|n| n.lookup(query.payload)) {
                 Some(Outcome::Answer(a)) => {
                     // Rare and load-bearing, like `.fips`: say so at info.
                     tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name answered over fips");
-                    (Some(a), false)
+                    Some(a)
                 }
-                Some(Outcome::Pending) => (None, true),
-                Some(Outcome::Legacy) | None => (None, false),
-            };
-            answer.or_else(|| {
-                let legacy = self
-                    .upstreams
-                    .iter()
-                    .find_map(|&upstream| self.forward(query.payload, upstream, true))?;
-                Some(if pending {
-                    pubdom_core::synth::clamp_ttls(&legacy, pubdom_core::OVERRUN_TTL_SECS)
-                        .unwrap_or(legacy)
-                } else {
-                    legacy
-                })
-            })
+                Some(Outcome::Pending) => {
+                    tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name still deciding; legacy answer for a few seconds");
+                    forward().map(|legacy| {
+                        // A reply the clamp cannot parse (truncated above
+                        // MAX_RESPONSE, malformed) goes out as it came: the
+                        // app's resolver may still use it, and a name not
+                        // over fips must not fail for a slow lookup.
+                        pubdom_core::synth::clamp_ttls(&legacy, pubdom_core::OVERRUN_TTL_SECS)
+                            .unwrap_or(legacy)
+                    })
+                }
+                Some(Outcome::Legacy) | None => forward(),
+            }
         };
 
         let payload = match response_payload {
