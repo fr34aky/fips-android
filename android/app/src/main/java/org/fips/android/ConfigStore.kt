@@ -41,6 +41,12 @@ object ConfigStore {
     const val NAMES_WITNESSES = "names_witnesses"
     /** How many witnesses must attest a server (k). */
     const val NAMES_ATTESTATION_K = "names_attestation_k"
+    /**
+     * DNSSEC for public names: validate the domain's DNS record and accept
+     * the DNSSEC proof in its claim. Off, only witnesses vouch offline for a
+     * domain never seen. On by default; off is for testing the witness path.
+     */
+    const val NAMES_DNSSEC = "names_dnssec"
     const val HOTSPOT = "hotspot_enabled"
     const val INBOUND_FILTER = "inbound_filter"
     const val INBOUND_PORTS = "inbound_ports"
@@ -112,6 +118,7 @@ object ConfigStore {
     const val DEF_PUBLIC_NAMES = true
     /** The library's default too (pubdom-resolve `ResolverConfig`). */
     const val DEF_NAMES_ATTESTATION_K = 2
+    const val DEF_NAMES_DNSSEC = true
     const val DEF_HOTSPOT = true
     const val DEF_AUTO_UPDATE = true
     const val DEF_FORWARD_CLEARNET = true
@@ -374,6 +381,7 @@ object ConfigStore {
 
     /** Public domain names over fips, honouring the default. */
     fun publicNames(context: Context) = prefs(context).getBoolean(PUBLIC_NAMES, DEF_PUBLIC_NAMES)
+    fun namesDnssec(context: Context) = prefs(context).getBoolean(NAMES_DNSSEC, DEF_NAMES_DNSSEC)
 
     /** FIPS Hotspot auto-join, honouring the default. */
     fun hotspotEnabled(context: Context) = prefs(context).getBoolean(HOTSPOT, DEF_HOTSPOT)
@@ -455,6 +463,8 @@ object ConfigStore {
                 config.put("names_witnesses", JSONArray(it))
                 config.put("names_attestation_threshold", attestationThreshold(context))
             }
+            // Only the non-default is sent: absent means the library's on.
+            if (!namesDnssec(context)) config.put("names_dnssec", false)
         }
 
         // Only a customised list is sent; omitted → fips's built-in relays

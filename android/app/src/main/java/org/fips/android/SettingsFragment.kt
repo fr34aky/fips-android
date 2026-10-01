@@ -227,6 +227,7 @@ class SettingsFragment : Fragment() {
             p.getBoolean(CS.BATTERY_SAVER, CS.DEF_BATTERY_SAVER) ||
             sw(view, R.id.lan_mdns).isChecked != CS.lanMdns(requireContext()) ||
             sw(view, R.id.public_names).isChecked != CS.publicNames(requireContext()) ||
+            sw(view, R.id.names_dnssec).isChecked != CS.namesDnssec(requireContext()) ||
             e(R.id.names_mesh_relays) != p.getString(CS.NAMES_MESH_RELAYS, "") ||
             e(R.id.names_witnesses) != p.getString(CS.NAMES_WITNESSES, "") ||
             CS.parseAttestationThreshold(e(R.id.names_attestation_k)) !=
@@ -346,6 +347,7 @@ class SettingsFragment : Fragment() {
             p.getBoolean(CS.BATTERY_SAVER, CS.DEF_BATTERY_SAVER)
         sw(view, R.id.lan_mdns).isChecked = CS.lanMdns(requireContext())
         sw(view, R.id.public_names).isChecked = CS.publicNames(requireContext())
+        sw(view, R.id.names_dnssec).isChecked = CS.namesDnssec(requireContext())
         sw(view, R.id.nostr_discovery).isChecked =
             p.getBoolean(CS.NOSTR_DISCOVERY, CS.DEF_NOSTR_DISCOVERY)
         sw(view, R.id.bootstrap_fallbacks).isChecked =
@@ -378,6 +380,7 @@ class SettingsFragment : Fragment() {
             .putBoolean(CS.BATTERY_SAVER, sw(view, R.id.battery_saver).isChecked)
             .putBoolean(CS.LAN_MDNS, sw(view, R.id.lan_mdns).isChecked)
             .putBoolean(CS.PUBLIC_NAMES, sw(view, R.id.public_names).isChecked)
+            .putBoolean(CS.NAMES_DNSSEC, sw(view, R.id.names_dnssec).isChecked)
             .putString(CS.NAMES_MESH_RELAYS, edit(view, R.id.names_mesh_relays).text.toString().trim())
             .putString(CS.NAMES_WITNESSES, edit(view, R.id.names_witnesses).text.toString().trim())
             .putInt(
@@ -403,7 +406,7 @@ class SettingsFragment : Fragment() {
         /** Every persisted widget; [watchForEdits] must see all of them. */
         val SWITCHES = intArrayOf(
             R.id.inbound_filter, R.id.lan_mdns, R.id.hotspot, R.id.battery_saver,
-            R.id.bootstrap_fallbacks, R.id.nostr_discovery, R.id.public_names,
+            R.id.bootstrap_fallbacks, R.id.nostr_discovery, R.id.public_names, R.id.names_dnssec,
             R.id.auto_update, R.id.forward_clearnet,
         )
         val TEXT_FIELDS = intArrayOf(
