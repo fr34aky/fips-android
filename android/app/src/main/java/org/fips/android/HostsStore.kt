@@ -102,6 +102,14 @@ object HostsStore {
         return parse(s.local + (s.block ?: emptyList()))
     }
 
+    /** The synced block's master and every effective entry, from one read. */
+    @Synchronized
+    fun masterAndEffective(context: Context): Pair<String?, List<Host>> {
+        val text = read(context) ?: return null to emptyList()
+        val s = split(text)
+        return s.master to parse(s.local + (s.block ?: emptyList()))
+    }
+
     /** The block synced from another node, if any. */
     @Synchronized
     fun loadSynced(context: Context): Synced? {

@@ -42,6 +42,13 @@ object ConfigStore {
     /** How many witnesses must attest a server (k). */
     const val NAMES_ATTESTATION_K = "names_attestation_k"
     /**
+     * Also trust the nodes the phone already trusts for names — the node
+     * the Mesh names sync from and every name's node in the hosts file —
+     * as witnesses. Opt-in: a name's node is trusted to serve that name,
+     * which is not yet trust in its word about other domains.
+     */
+    const val NAMES_WITNESSES_FROM_HOSTS = "names_witnesses_from_hosts"
+    /**
      * DNSSEC for public names: validate the domain's DNS record and accept
      * the DNSSEC proof in its claim. Off, only witnesses vouch offline for a
      * domain never seen. On by default; off is for testing the witness path.
@@ -119,6 +126,7 @@ object ConfigStore {
     /** The library's default too (pubdom-resolve `ResolverConfig`). */
     const val DEF_NAMES_ATTESTATION_K = 2
     const val DEF_NAMES_DNSSEC = true
+    const val DEF_NAMES_WITNESSES_FROM_HOSTS = false
     const val DEF_HOTSPOT = true
     const val DEF_AUTO_UPDATE = true
     const val DEF_FORWARD_CLEARNET = true
@@ -269,8 +277,44 @@ object ConfigStore {
     fun invalidMeshRelays(text: String): List<String> =
         text.lines().map { it.trim() }.filter { it.isNotEmpty() && normalizeMeshRelay(it) == null }
 
-    /** Witnesses a phone can usefully list; k is bounded by it too. */
+    /** Witnesses a phone can usefully type; k is bounded by it too. */
     const val MAX_WITNESSES = 8
+    /** Typed and hosts-file witnesses together: every one is named in the
+     *  filter the resolver sends to the mesh relays. */
+    const val MAX_WITNESSES_TOTAL = 32
+
+    fun namesWitnessesFromHosts(context: Context) =
+        prefs(context).getBoolean(NAMES_WITNESSES_FROM_HOSTS, DEF_NAMES_WITNESSES_FROM_HOSTS)
+
+    /**
+     * The witnesses the hosts file implies: the node the names sync from
+     * (the configured source while the sync is on, else the one recorded
+     * in the file's synced block) first, then each name's node, each
+     * once, in file order. One read of the file. fips accepts an
+     * upper-case NPUB1… line, so the key is lower-cased before checking.
+     */
+    fun hostWitnesses(context: Context): List<String> {
+        val p = prefs(context)
+        val (master, hosts) = HostsStore.masterAndEffective(context)
+        val source = if (p.getBoolean(HOSTS_SYNC, DEF_HOSTS_SYNC)) p.getString(HOSTS_SYNC_FROM, "") else null
+        val out = mutableListOf<String>()
+        for (candidate in listOf(source, master) + hosts.map { it.npub }) {
+            val n = candidate?.trim()?.lowercase() ?: continue
+            if (isNpub(n)) out += n
+        }
+        return out.distinct()
+    }
+
+    /** Typed and (opt-in) hosts-file witnesses as one list: typed first,
+     *  each once, capped at [MAX_WITNESSES_TOTAL]. What the shim gets. */
+    fun combinedWitnesses(typed: List<String>, fromHosts: List<String>): List<String> =
+        (typed + fromHosts).distinct().take(MAX_WITNESSES_TOTAL)
+
+    /** Every witness sent to the shim, from the saved settings. */
+    fun allWitnesses(context: Context): List<String> {
+        val derived = if (namesWitnessesFromHosts(context)) hostWitnesses(context) else emptyList()
+        return combinedWitnesses(witnesses(context), derived)
+    }
 
     /** The witnesses for public names, validated npubs; at most [MAX_WITNESSES]. */
     fun witnesses(context: Context): List<String> =
@@ -471,7 +515,7 @@ object ConfigStore {
             }
             // Witnesses only with k: the shim's default for k is the
             // library's, so k is sent whenever the list is.
-            witnesses(context).takeIf { it.isNotEmpty() }?.let {
+            allWitnesses(context).takeIf { it.isNotEmpty() }?.let {
                 config.put("names_witnesses", JSONArray(it))
                 config.put("names_attestation_threshold", attestationThreshold(context))
             }
