@@ -321,6 +321,8 @@ crates.io per MPL §3.2(b).
 - MIT: <https://opensource.org/license/mit>
 - Apache-2.0: <https://www.apache.org/licenses/LICENSE-2.0>
 - BSD-3-Clause: <https://opensource.org/license/bsd-3-clause>
+- BSD-2-Clause: <https://opensource.org/license/bsd-2-clause>
+- 0BSD: <https://opensource.org/license/0bsd>
 - ISC: <https://opensource.org/license/isc-license-txt>
 - CC0-1.0: <https://creativecommons.org/publicdomain/zero/1.0/>
 - Zlib: <https://opensource.org/license/zlib>
