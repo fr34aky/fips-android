@@ -384,7 +384,9 @@ class FipsVpnService : VpnService() {
             pfd.close()
         } else {
             Log.i(TAG, "fips engine running, address $address, ipv6Clearnet=$wantIpv6")
-            // The resolver starts assuming online; give it the real answer.
+            // The resolver starts assuming the Internet is there; give it
+            // the real answer (the OS default network's, until the callback
+            // has reported).
             pushNamesOnline(force = true)
             registerNetworkMonitoring()
             startHotspot()
@@ -850,25 +852,42 @@ class FipsVpnService : VpnService() {
     @Volatile private var namesOnline: Boolean? = null
 
     /**
-     * Whether any non-hotspot network is validated: Android's captive-portal
+     * The candidate networks with their capabilities, one binder call each:
+     * both the egress choice and the Internet flag are read off this.
+     */
+    private fun candidateNetworks(): List<Pair<Network, NetworkCapabilities?>> {
+        val cm = connectivity ?: return emptyList()
+        val snapshot = synchronized(availableNetworks) { availableNetworks.toList() }
+        return snapshot.filter { it != hotspotNetwork } // never egress internet via "!FIPS"
+            .map { it to cm.getNetworkCapabilities(it) }
+    }
+
+    /**
+     * Whether any candidate network is validated: Android's captive-portal
      * check passed, so legacy DNS and public relays are reachable. A network
      * that merely has the INTERNET capability may be a Wi-Fi whose router
      * blocks us (seen on the test phone: the resolver then waited out every
-     * TXT timeout). Only the resolver gets this; the node's own routing is
-     * untouched.
+     * TXT timeout). Before the callback has delivered anything — right after
+     * connect — the OS's default network answers instead. Only the resolver
+     * gets this; the node's own routing is untouched.
      */
-    private fun internetValidated(): Boolean {
-        val cm = connectivity ?: return false
-        val snapshot = synchronized(availableNetworks) { availableNetworks.toList() }
-        return snapshot.filter { it != hotspotNetwork }.any { net ->
-            cm.getNetworkCapabilities(net)
+    private fun internetValidated(candidates: List<Pair<Network, NetworkCapabilities?>>): Boolean {
+        if (candidates.isEmpty()) {
+            val cm = connectivity ?: return false
+            return cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
                 ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        }
+        return candidates.any {
+            it.second?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
         }
     }
 
     /** Tell the resolver when the Internet flag changed (or on `force`). */
-    private fun pushNamesOnline(force: Boolean = false) {
-        val now = internetValidated()
+    private fun pushNamesOnline(
+        candidates: List<Pair<Network, NetworkCapabilities?>> = candidateNetworks(),
+        force: Boolean = false,
+    ) {
+        val now = internetValidated(candidates)
         if (force || namesOnline != now) {
             namesOnline = now
             Log.i(TAG, "public names: internet ${if (now) "validated" else "not validated"}")
@@ -931,12 +950,11 @@ class FipsVpnService : VpnService() {
      * validated cellular network — follow the OS), then Wi-Fi > Ethernet >
      * cellular.
      */
-    private fun preferredUnderlying(): Network? {
-        val cm = connectivity ?: return null
-        val snapshot = synchronized(availableNetworks) { availableNetworks.toList() }
-            .filter { it != hotspotNetwork } // never egress internet via "!FIPS"
-        return snapshot.maxByOrNull { net ->
-            val caps = cm.getNetworkCapabilities(net) ?: return@maxByOrNull 0
+    private fun preferredUnderlying(
+        candidates: List<Pair<Network, NetworkCapabilities?>> = candidateNetworks(),
+    ): Network? {
+        return candidates.maxByOrNull { (_, caps) ->
+            caps ?: return@maxByOrNull 0
             val transport = when {
                 caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 3
                 caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 2
@@ -946,14 +964,16 @@ class FipsVpnService : VpnService() {
             val validated =
                 caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
             if (validated) transport + 4 else transport
-        }
+        }?.first
     }
 
     private fun updateUnderlying() {
-        // Validation flips without the preferred network changing (a Wi-Fi
-        // losing its Internet keeps its transport), so this comes first.
-        pushNamesOnline()
-        val network = preferredUnderlying() ?: return
+        // One pass over the candidates serves both: validation flips
+        // without the preferred network changing (a Wi-Fi losing its
+        // Internet keeps its transport), so the flag comes first.
+        val candidates = candidateNetworks()
+        pushNamesOnline(candidates)
+        val network = preferredUnderlying(candidates) ?: return
         onUnderlyingNetwork(network)
     }
 

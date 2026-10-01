@@ -57,10 +57,12 @@ object FipsNative {
 
     /**
      * Tell the public-names resolver whether a validated Internet network
-     * exists. Offline it skips the legacy DNS lookup instead of waiting out
-     * its timeout, so a first lookup through a mesh relay fits the budget.
-     * Sent at start and whenever the answer changes. No-op if the engine
-     * isn't running.
+     * exists. Without one its legacy DNS lookup gets a short wait, so a
+     * first offline lookup fails into the mesh path within the budget; the
+     * lookup is not skipped, so a network that works but was never
+     * validated still verifies online. Sent at start and whenever the
+     * answer changes; the shim remembers it across rebinds. No-op if the
+     * engine isn't running.
      */
     external fun namesOnline(online: Boolean)
 

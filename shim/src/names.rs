@@ -148,14 +148,33 @@ impl Names {
     }
 
     /// What the VpnService knows and the resolver cannot: whether a
-    /// validated Internet network exists. Offline, the resolver skips the
-    /// TXT lookup instead of waiting out its timeout, so a first lookup
-    /// through a mesh relay fits the budget rather than resolving only on
-    /// the retry. The resolver flushes its decisions when this changes.
-    pub fn set_online(&self, online: bool) {
-        self.resolver.set_online(online);
+    /// validated Internet network exists. Without one the TXT lookup gets
+    /// a short wait, so a first offline lookup fails into the mesh path
+    /// within the budget instead of resolving only on the retry. The
+    /// lookup is shortened, not skipped: a network that works but was never
+    /// validated (a captive-portal probe blocked) must still verify online,
+    /// and the resolver keeps believing it is online, so its relay scope
+    /// stays mesh-only without a TXT hit — no public relay learns a domain.
+    pub fn set_internet_validated(&self, validated: bool) {
+        let want = if validated { TXT_TIMEOUT_ONLINE } else { TXT_TIMEOUT_UNVALIDATED };
+        if self.resolver.txt().timeout() == want {
+            return;
+        }
+        tracing::info!(validated, txt_timeout_ms = want.as_millis(), "public names: internet validation changed");
+        if let Err(e) = self.resolver.txt().set_timeout(want) {
+            tracing::warn!(error = %e, "could not change the TXT verifier's timeout");
+            return;
+        }
+        self.resolver.flush_caches();
     }
 }
+
+/// The library's TXT wait while a validated Internet network exists.
+const TXT_TIMEOUT_ONLINE: Duration = Duration::from_millis(1500);
+/// Without one: long enough for a LAN resolver that answers, short enough
+/// that a first offline lookup — this, the mesh relay, step 3, the echo —
+/// fits the 3.5 s budget.
+const TXT_TIMEOUT_UNVALIDATED: Duration = Duration::from_millis(500);
 
 impl Lookup for Names {
     fn lookup(&self, query: &[u8]) -> Outcome {
