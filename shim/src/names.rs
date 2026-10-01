@@ -35,9 +35,24 @@ use crate::meshtcp::MeshRelayProxy;
 /// bionic) with room for the legacy fallback after it.
 const BUDGET: Duration = Duration::from_millis(3500);
 
-/// What the DNS proxy asks: a complete reply, or "not ours".
+/// What the DNS proxy asks: a complete reply, or what to do with the
+/// legacy one.
+pub enum Outcome {
+    /// A complete reply for the application.
+    Answer(Vec<u8>),
+    /// Not over fips: the upstreams' answer, unchanged.
+    Legacy,
+    /// Still deciding (the lookup overran its budget and carries on): the
+    /// upstreams' answer, but with its TTLs capped at
+    /// `pubdom_core::OVERRUN_TTL_SECS` so the application's resolver asks
+    /// again about when the decision is in. Android kept a parked
+    /// wildcard's address for its 300 s otherwise, and the cached decision
+    /// was never asked for.
+    Pending,
+}
+
 pub trait Lookup: Send + Sync {
-    fn lookup(&self, query: &[u8]) -> Option<Vec<u8>>;
+    fn lookup(&self, query: &[u8]) -> Outcome;
 }
 
 pub struct Names {
@@ -109,26 +124,29 @@ impl Names {
 }
 
 impl Lookup for Names {
-    fn lookup(&self, query: &[u8]) -> Option<Vec<u8>> {
-        let rt = self.rt.as_ref()?;
+    fn lookup(&self, query: &[u8]) -> Outcome {
+        let Some(rt) = self.rt.as_ref() else {
+            return Outcome::Legacy;
+        };
         let resolver = self.resolver.clone();
         let q = query.to_vec();
         // Spawned, not awaited in place: when the budget runs out the app
-        // gets the legacy answer, but the lookup carries on and caches its
-        // decision — so the retry every resolver makes is answered at once.
-        // Cancelling it instead meant a slow path (offline: TXT timeout,
-        // then a mesh relay) never finished, however often it was asked.
+        // gets the legacy answer (short-lived, see `Outcome::Pending`), but
+        // the lookup carries on and caches its decision — so the query the
+        // resolver makes after that is answered at once. Cancelling it
+        // instead meant a slow path (offline: TXT timeout, then a mesh
+        // relay) never finished, however often it was asked.
         let task = rt.spawn(async move { resolver.lookup(&q).await });
         match rt.block_on(async { tokio::time::timeout(BUDGET, task).await }) {
-            Ok(Ok(LookupResult::Answer(a))) => Some(a),
-            Ok(Ok(LookupResult::Passthrough)) => None,
+            Ok(Ok(LookupResult::Answer(a))) => Outcome::Answer(a),
+            Ok(Ok(LookupResult::Passthrough)) => Outcome::Legacy,
             Ok(Err(e)) => {
                 tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
-                None
+                Outcome::Legacy
             }
             Err(_) => {
-                tracing::info!("public-name lookup still running after its budget; using the legacy answer this time");
-                None
+                tracing::info!("public-name lookup still running after its budget; using the legacy answer briefly");
+                Outcome::Pending
             }
         }
     }
