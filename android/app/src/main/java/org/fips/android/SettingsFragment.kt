@@ -177,6 +177,15 @@ class SettingsFragment : Fragment() {
         }
         relays.doAfterTextChanged { showInvalid() }
         showInvalid()
+        val witnesses = edit(view, R.id.names_witnesses)
+        val showInvalidWitnesses = {
+            val bad = CS.invalidWitnesses(witnesses.text.toString())
+            view.findViewById<TextInputLayout>(R.id.names_witnesses_layout).error =
+                if (bad.isEmpty()) null
+                else "Not an npub1… key, ignored: " + bad.joinToString(", ")
+        }
+        witnesses.doAfterTextChanged { showInvalidWitnesses() }
+        showInvalidWitnesses()
         syncSaveButton(view)
     }
 
@@ -201,6 +210,10 @@ class SettingsFragment : Fragment() {
             sw(view, R.id.lan_mdns).isChecked != CS.lanMdns(requireContext()) ||
             sw(view, R.id.public_names).isChecked != CS.publicNames(requireContext()) ||
             e(R.id.names_mesh_relays) != p.getString(CS.NAMES_MESH_RELAYS, "") ||
+            e(R.id.names_witnesses) != p.getString(CS.NAMES_WITNESSES, "") ||
+            (e(R.id.names_attestation_k).toIntOrNull() ?: CS.DEF_NAMES_ATTESTATION_K)
+                .coerceIn(0, CS.MAX_RELAYS) !=
+            p.getInt(CS.NAMES_ATTESTATION_K, CS.DEF_NAMES_ATTESTATION_K) ||
             sw(view, R.id.nostr_discovery).isChecked !=
             p.getBoolean(CS.NOSTR_DISCOVERY, CS.DEF_NOSTR_DISCOVERY) ||
             sw(view, R.id.bootstrap_fallbacks).isChecked !=
@@ -309,6 +322,9 @@ class SettingsFragment : Fragment() {
             p.getBoolean(CS.INBOUND_FILTER, CS.DEF_INBOUND_FILTER)
         edit(view, R.id.inbound_ports).setText(p.getString(CS.INBOUND_PORTS, ""))
         edit(view, R.id.names_mesh_relays).setText(p.getString(CS.NAMES_MESH_RELAYS, ""))
+        edit(view, R.id.names_witnesses).setText(p.getString(CS.NAMES_WITNESSES, ""))
+        edit(view, R.id.names_attestation_k)
+            .setText(p.getInt(CS.NAMES_ATTESTATION_K, CS.DEF_NAMES_ATTESTATION_K).toString())
         sw(view, R.id.battery_saver).isChecked =
             p.getBoolean(CS.BATTERY_SAVER, CS.DEF_BATTERY_SAVER)
         sw(view, R.id.lan_mdns).isChecked = CS.lanMdns(requireContext())
@@ -346,6 +362,12 @@ class SettingsFragment : Fragment() {
             .putBoolean(CS.LAN_MDNS, sw(view, R.id.lan_mdns).isChecked)
             .putBoolean(CS.PUBLIC_NAMES, sw(view, R.id.public_names).isChecked)
             .putString(CS.NAMES_MESH_RELAYS, edit(view, R.id.names_mesh_relays).text.toString().trim())
+            .putString(CS.NAMES_WITNESSES, edit(view, R.id.names_witnesses).text.toString().trim())
+            .putInt(
+                CS.NAMES_ATTESTATION_K,
+                (edit(view, R.id.names_attestation_k).text.toString().trim().toIntOrNull()
+                    ?: CS.DEF_NAMES_ATTESTATION_K).coerceIn(0, CS.MAX_RELAYS)
+            )
             .putBoolean(CS.NOSTR_DISCOVERY, sw(view, R.id.nostr_discovery).isChecked)
             .putBoolean(CS.BOOTSTRAP_FALLBACKS, sw(view, R.id.bootstrap_fallbacks).isChecked)
             .putBoolean(CS.HOTSPOT, sw(view, R.id.hotspot).isChecked)
@@ -371,6 +393,7 @@ class SettingsFragment : Fragment() {
         val TEXT_FIELDS = intArrayOf(
             R.id.peer_npub, R.id.peer_endpoint, R.id.peer_transport, R.id.inbound_ports,
             R.id.worker_threads, R.id.log_level, R.id.names_mesh_relays,
+            R.id.names_witnesses, R.id.names_attestation_k,
         )
     }
 }

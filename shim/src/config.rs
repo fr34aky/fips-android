@@ -130,6 +130,15 @@ pub struct ShimConfig {
     /// DNSSEC proof) — logged as UNVERIFIED on every use. Off by default.
     #[serde(default)]
     pub names_allow_unverified_offline: bool,
+    /// Witnesses (npubs) whose attestations count offline for a domain with
+    /// no pin and no proof (fips-pub-domains spec §3.2); nobody else's are
+    /// fetched, and only from the mesh relays. Empty: attestations unused.
+    #[serde(default)]
+    pub names_witnesses: Vec<String>,
+    /// How many of them must attest a server (*k*); 0 turns attestations
+    /// off. Absent: the library default (2).
+    #[serde(default)]
+    pub names_attestation_threshold: Option<usize>,
     /// Advanced: a full `fips.yaml`. When non-empty it becomes the base
     /// `fips::Config` (all fips parameters — transports, node.*, rendezvous,
     /// dns, lookup, …); the shim then forces the non-negotiable Android bits

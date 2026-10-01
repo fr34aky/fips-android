@@ -32,6 +32,15 @@ object ConfigStore {
      * line, as typed; [meshRelays] validates on the way out. Blank = none.
      */
     const val NAMES_MESH_RELAYS = "names_mesh_relays"
+    /**
+     * Witnesses for public names, one `npub1…` per line, as typed;
+     * [witnesses] validates on the way out. Their attestations let a domain
+     * never seen resolve offline when its claim carries no DNSSEC proof.
+     * Blank = attestations unused.
+     */
+    const val NAMES_WITNESSES = "names_witnesses"
+    /** How many witnesses must attest a server (k). */
+    const val NAMES_ATTESTATION_K = "names_attestation_k"
     const val HOTSPOT = "hotspot_enabled"
     const val INBOUND_FILTER = "inbound_filter"
     const val INBOUND_PORTS = "inbound_ports"
@@ -101,6 +110,8 @@ object ConfigStore {
     const val DEF_BATTERY_SAVER = true
     const val DEF_LAN_MDNS = true
     const val DEF_PUBLIC_NAMES = true
+    /** The library's default too (pubdom-resolve `ResolverConfig`). */
+    const val DEF_NAMES_ATTESTATION_K = 2
     const val DEF_HOTSPOT = true
     const val DEF_AUTO_UPDATE = true
     const val DEF_FORWARD_CLEARNET = true
@@ -250,6 +261,19 @@ object ConfigStore {
     /** Lines of [text] that are not a valid mesh relay (for the Settings hint). */
     fun invalidMeshRelays(text: String): List<String> =
         text.lines().map { it.trim() }.filter { it.isNotEmpty() && normalizeMeshRelay(it) == null }
+
+    /** The witnesses for public names, validated npubs; at most [MAX_RELAYS]. */
+    fun witnesses(context: Context): List<String> =
+        (prefs(context).getString(NAMES_WITNESSES, "") ?: "").lines()
+            .map { it.trim() }.filter { isNpub(it) }.distinct().take(MAX_RELAYS)
+
+    /** Lines of [text] that are not an npub (for the Settings hint). */
+    fun invalidWitnesses(text: String): List<String> =
+        text.lines().map { it.trim() }.filter { it.isNotEmpty() && !isNpub(it) }
+
+    /** k, clamped to what makes sense: 0 (off) to [MAX_RELAYS]. */
+    fun attestationThreshold(context: Context): Int =
+        prefs(context).getInt(NAMES_ATTESTATION_K, DEF_NAMES_ATTESTATION_K).coerceIn(0, MAX_RELAYS)
 
     private const val BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
@@ -407,6 +431,12 @@ object ConfigStore {
             config.put("names_pins_path", HostsStore.file(context).resolveSibling("names-pins.json").absolutePath)
             meshRelays(context).takeIf { it.isNotEmpty() }?.let {
                 config.put("names_mesh_relays", JSONArray(it))
+            }
+            // Witnesses only with k: the shim's default for k is the
+            // library's, so k is sent whenever the list is.
+            witnesses(context).takeIf { it.isNotEmpty() }?.let {
+                config.put("names_witnesses", JSONArray(it))
+                config.put("names_attestation_threshold", attestationThreshold(context))
             }
         }
 
