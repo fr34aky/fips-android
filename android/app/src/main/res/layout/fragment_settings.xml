@@ -197,6 +197,14 @@
                     style="@style/Widget.Fips.Summary"
                     android:text="Nodes you trust to have checked a domain online, one npub1… per line — your own other nodes, or a friend\'s. Without internet, a domain never seen whose claim carries no DNSSEC proof is used once this many of them vouch for its server, through the mesh relays above. Only these keys are asked for; blank: attestations are not used. 0 witnesses that must agree also turns them off." />
                 <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/names_witnesses_from_hosts"
+                    style="@style/Widget.Fips.SettingSwitch"
+                    android:layout_marginTop="8dp"
+                    android:text="Trust my Mesh names as witnesses" />
+                <TextView
+                    style="@style/Widget.Fips.Summary"
+                    android:text="Also count the nodes in Mesh names — the node the names sync from and every name\'s node — as witnesses, on top of the ones typed above. Off by default: a node you trust to serve a name is not automatically one you trust to vouch for other domains." />
+                <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/names_dnssec"
                     style="@style/Widget.Fips.SettingSwitch"
                     android:layout_marginTop="8dp"

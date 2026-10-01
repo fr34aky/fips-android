@@ -182,10 +182,14 @@ class SettingsFragment : Fragment() {
         // no-op in the shim — say so here.
         val witnesses = edit(view, R.id.names_witnesses)
         val k = edit(view, R.id.names_attestation_k)
+        val fromHosts = sw(view, R.id.names_witnesses_from_hosts)
         val showWitnessState = {
             val text = witnesses.text.toString()
             val bad = CS.invalidWitnesses(text)
-            val valid = CS.validWitnesses(text)
+            val hosts = if (fromHosts.isChecked) CS.hostWitnesses(requireContext()) else emptyList()
+            val valid = (CS.validWitnesses(text) + hosts).distinct()
+            fromHosts.text = if (hosts.isEmpty()) "Trust my Mesh names as witnesses"
+                else "Trust my Mesh names as witnesses (${hosts.size} nodes)"
             val relays = CS.invalidMeshRelays(relays.text.toString()).isEmpty() &&
                 relays.text.toString().lines().any { CS.normalizeMeshRelay(it) != null }
             view.findViewById<TextInputLayout>(R.id.names_witnesses_layout).error = when {
@@ -209,6 +213,10 @@ class SettingsFragment : Fragment() {
         k.doAfterTextChanged { showWitnessState() }
         relays.doAfterTextChanged { showWitnessState() }
         sw(view, R.id.names_dnssec).setOnCheckedChangeListener { _, _ ->
+            showWitnessState()
+            syncSaveButton(view)
+        }
+        fromHosts.setOnCheckedChangeListener { _, _ ->
             showWitnessState()
             syncSaveButton(view)
         }
@@ -245,6 +253,8 @@ class SettingsFragment : Fragment() {
             sw(view, R.id.lan_mdns).isChecked != CS.lanMdns(requireContext()) ||
             sw(view, R.id.public_names).isChecked != CS.publicNames(requireContext()) ||
             sw(view, R.id.names_dnssec).isChecked != CS.namesDnssec(requireContext()) ||
+            sw(view, R.id.names_witnesses_from_hosts).isChecked !=
+            CS.namesWitnessesFromHosts(requireContext()) ||
             e(R.id.names_mesh_relays) != p.getString(CS.NAMES_MESH_RELAYS, "") ||
             e(R.id.names_witnesses) != p.getString(CS.NAMES_WITNESSES, "") ||
             CS.parseAttestationThreshold(e(R.id.names_attestation_k)) !=
@@ -365,6 +375,8 @@ class SettingsFragment : Fragment() {
         sw(view, R.id.lan_mdns).isChecked = CS.lanMdns(requireContext())
         sw(view, R.id.public_names).isChecked = CS.publicNames(requireContext())
         sw(view, R.id.names_dnssec).isChecked = CS.namesDnssec(requireContext())
+        sw(view, R.id.names_witnesses_from_hosts).isChecked =
+            CS.namesWitnessesFromHosts(requireContext())
         sw(view, R.id.nostr_discovery).isChecked =
             p.getBoolean(CS.NOSTR_DISCOVERY, CS.DEF_NOSTR_DISCOVERY)
         sw(view, R.id.bootstrap_fallbacks).isChecked =
@@ -398,6 +410,10 @@ class SettingsFragment : Fragment() {
             .putBoolean(CS.LAN_MDNS, sw(view, R.id.lan_mdns).isChecked)
             .putBoolean(CS.PUBLIC_NAMES, sw(view, R.id.public_names).isChecked)
             .putBoolean(CS.NAMES_DNSSEC, sw(view, R.id.names_dnssec).isChecked)
+            .putBoolean(
+                CS.NAMES_WITNESSES_FROM_HOSTS,
+                sw(view, R.id.names_witnesses_from_hosts).isChecked
+            )
             .putString(CS.NAMES_MESH_RELAYS, edit(view, R.id.names_mesh_relays).text.toString().trim())
             .putString(CS.NAMES_WITNESSES, edit(view, R.id.names_witnesses).text.toString().trim())
             .putInt(
@@ -424,6 +440,7 @@ class SettingsFragment : Fragment() {
         val SWITCHES = intArrayOf(
             R.id.inbound_filter, R.id.lan_mdns, R.id.hotspot, R.id.battery_saver,
             R.id.bootstrap_fallbacks, R.id.nostr_discovery, R.id.public_names, R.id.names_dnssec,
+            R.id.names_witnesses_from_hosts,
             R.id.auto_update, R.id.forward_clearnet,
         )
         val TEXT_FIELDS = intArrayOf(
