@@ -3,19 +3,21 @@
 Binary releases of fips-android bundle `libfips_android.so`, which
 statically links the components below. This file is generated from the
 `aarch64-linux-android` dependency tree of `shim/` (normal dependencies
-only — build tools and proc-macros do not ship in the binary).
+only, build tools excluded; proc-macro crates appear in that tree and are
+listed for completeness, though they run at build time and do not ship).
 
 ## fips
 
 [fips](https://github.com/jmcorgan/fips) v0.6.0-dev — MIT License,
 Copyright (c) Johnathan Corgan. The mesh daemon this app embeds (via the
-`fr34aky/fips` fork, branch `android-hooks`, which adds the embedder hooks
-under the same license).
+`fr34aky/fips` fork, branch `android-hooks`, git dependency at rev f4a811e,
+which adds the embedder hooks under the same license).
 
 ## fips-pub-domains
 
-[fips-pub-domains](https://github.com/fr34aky/fips-pub-domains) v0.2.3
-(`pubdom-core`, `pubdom-resolve`; git dependency at rev 917cf10) — MIT
+[fips-pub-domains](https://github.com/fr34aky/fips-pub-domains) v0.2.3 plus
+unreleased changes (`pubdom-core`, `pubdom-resolve`; git dependency at rev
+fd0e8fc, eight commits past the v0.2.3 tag) — MIT
 License, Copyright (c) fr34aky. Public domain names over fips: the
 verification policy and the resolver this app's DNS proxy runs.
 
