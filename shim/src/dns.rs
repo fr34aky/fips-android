@@ -47,8 +47,10 @@ pub struct DnsProxy {
     /// edit in the app applies without a node restart.
     pub hosts: Option<Mutex<HostMapReloader>>,
     /// Public domain names over fips (`names.rs`), `None` when off. Asked
-    /// before the upstreams for every non-`.fips` name; `None` from it
-    /// means "not over fips" and the query goes upstream unchanged.
+    /// before the upstreams for every non-`.fips` name; `Legacy` from it
+    /// means "not over fips" and the query goes upstream unchanged,
+    /// `Pending` that it goes upstream but the answer's TTLs are capped
+    /// while the lookup is still deciding.
     pub names: Option<Arc<dyn crate::names::Lookup>>,
 }
 
@@ -117,14 +119,32 @@ impl DnsProxy {
                 None => tracing::warn!(qname = %qname, ".fips responder unreachable"),
             }
             resp
-        } else if let Some(answer) = self.names.as_ref().and_then(|n| n.lookup(query.payload)) {
-            // Rare and load-bearing, like `.fips`: say so at info.
-            tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name answered over fips");
-            Some(answer)
         } else {
-            self.upstreams
-                .iter()
-                .find_map(|&upstream| self.forward(query.payload, upstream, true))
+            use crate::names::Outcome;
+            let forward = || {
+                self.upstreams
+                    .iter()
+                    .find_map(|&upstream| self.forward(query.payload, upstream, true))
+            };
+            match self.names.as_ref().map(|n| n.lookup(query.payload)) {
+                Some(Outcome::Answer(a)) => {
+                    // Rare and load-bearing, like `.fips`: say so at info.
+                    tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name answered over fips");
+                    Some(a)
+                }
+                Some(Outcome::Pending) => {
+                    tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name still deciding; legacy answer for a few seconds");
+                    forward().map(|legacy| {
+                        // A reply the clamp cannot parse (truncated above
+                        // MAX_RESPONSE, malformed) goes out as it came: the
+                        // app's resolver may still use it, and a name not
+                        // over fips must not fail for a slow lookup.
+                        pubdom_core::synth::clamp_ttls(&legacy, pubdom_core::OVERRUN_TTL_SECS)
+                            .unwrap_or(legacy)
+                    })
+                }
+                Some(Outcome::Legacy) | None => forward(),
+            }
         };
 
         let payload = match response_payload {
@@ -513,13 +533,20 @@ mod tests {
     /// must go upstream exactly as before.
     #[test]
     fn public_names_answer_before_upstreams_and_fall_through() {
+        use crate::names::Outcome;
         struct Bound;
         impl crate::names::Lookup for Bound {
-            fn lookup(&self, query: &[u8]) -> Option<Vec<u8>> {
-                let q = pubdom_core::synth::parse_query(query)?;
-                (q.name == "www.example.org")
-                    .then(|| pubdom_core::synth::build_answer(&q, pubdom_core::Npub::from_bytes([7; 32]), 30))
-                    .flatten()
+            fn lookup(&self, query: &[u8]) -> Outcome {
+                let Some(q) = pubdom_core::synth::parse_query(query) else {
+                    return Outcome::Legacy;
+                };
+                if q.name != "www.example.org" {
+                    return Outcome::Legacy;
+                }
+                match pubdom_core::synth::build_answer(&q, pubdom_core::Npub::from_bytes([7; 32]), 30) {
+                    Some(a) => Outcome::Answer(a),
+                    None => Outcome::Legacy,
+                }
             }
         }
         // An upstream that would answer anything it is asked, so a leak of
@@ -551,6 +578,52 @@ mod tests {
 
         let reply = ask(&proxy, &replies, &typed_query_for("www.example.net", TYPE_AAAA));
         assert_eq!(reply[3] & 0x0f, 3, "not over fips: the upstream's answer");
+    }
+
+    /// While the names resolver is still deciding (its budget ran out),
+    /// the upstream's answer is handed out with short TTLs: the app's
+    /// resolver must ask again once the decision is cached, not keep the
+    /// legacy address for the record's own TTL.
+    #[test]
+    fn pending_public_name_gets_the_legacy_answer_short_lived() {
+        use crate::names::Outcome;
+        struct Slow;
+        impl crate::names::Lookup for Slow {
+            fn lookup(&self, _: &[u8]) -> Outcome {
+                Outcome::Pending
+            }
+        }
+        // An upstream answering every question with one A record, TTL 300.
+        let upstream = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let upstream_addr = upstream.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = upstream.recv_from(&mut buf) {
+                let mut reply = buf[..n].to_vec();
+                reply[2] |= 0x80;
+                reply[6..8].copy_from_slice(&[0, 1]);
+                reply.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1]); // name ptr, A, IN
+                reply.extend_from_slice(&300u32.to_be_bytes());
+                reply.extend_from_slice(&[0, 4, 217, 26, 48, 101]);
+                let _ = upstream.send_to(&reply, from);
+            }
+        });
+        let (writer_tx, replies) = std::sync::mpsc::channel();
+        let proxy = Arc::new(DnsProxy {
+            local_responder: "[::1]:1".parse().unwrap(),
+            upstreams: vec![upstream_addr],
+            writer_tx,
+            protect: None,
+            hosts: None,
+            names: Some(Arc::new(Slow)),
+        });
+        let reply = ask(&proxy, &replies, &typed_query_for("relay.example.org", 1));
+        assert_eq!(reply[3] & 0x0f, 0);
+        assert_eq!(reply[6..8], [0, 1], "the upstream's one A record");
+        let n = reply.len();
+        assert_eq!(&reply[n - 4..], &[217, 26, 48, 101], "the upstream's address");
+        let ttl = u32::from_be_bytes(reply[n - 10..n - 6].try_into().unwrap());
+        assert_eq!(ttl, pubdom_core::OVERRUN_TTL_SECS, "TTL capped while the lookup is pending");
     }
 
     /// A reply that does not parse must become SERVFAIL, not a panic.
