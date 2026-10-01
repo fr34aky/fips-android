@@ -92,9 +92,11 @@ only when the fips pin moved: any new direct dependency (the pubdom crates
 arrived without the fips pin moving, and 0.9.0 nearly shipped the 0.8.0
 notices) or version bump changes what is linked. The table comes from
 `cd shim && cargo tree --target aarch64-linux-android -e normal --prefix none
--f "{p}|{l}" --locked | sort -u`, one row per crate and version, git
-dependencies (fips, fips-pub-domains) in their own sections rather than the
-crates.io table. Otherwise attach the existing one.
+-f "{p}|{l}" --locked | sort -u`, one row per crate and version: strip the
+`(*)` (repeated subtree) and `(proc-macro)` markers, drop the shim crate
+itself, keep the git dependencies (fips, fips-pub-domains) in their own
+sections with their pinned rev rather than in the crates.io table.
+Otherwise attach the existing one.
 
 ## 3. Publish the GitHub release
 
