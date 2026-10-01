@@ -86,8 +86,15 @@ BT=$(ls -d "$(sed -n 's/^sdk.dir=//p' android/local.properties)"/build-tools/* |
 Expect the new `versionCode`/`versionName` and all three ABIs in the universal
 APK. The signature line in the build output must read `CN=fr34aky`.
 
-Regenerate `THIRD-PARTY-NOTICES.md` only when the **fips pin** moved (from the
-arm64 `cargo tree`); otherwise attach the existing one.
+Regenerate `THIRD-PARTY-NOTICES.md` whenever `shim/Cargo.lock` changed since
+the last tag — `git diff <last-tag>..main --stat -- shim/Cargo.lock` — not
+only when the fips pin moved: any new direct dependency (the pubdom crates
+arrived without the fips pin moving, and 0.9.0 nearly shipped the 0.8.0
+notices) or version bump changes what is linked. The table comes from
+`cd shim && cargo tree --target aarch64-linux-android -e normal --prefix none
+-f "{p}|{l}" --locked | sort -u`, one row per crate and version, git
+dependencies (fips, fips-pub-domains) in their own sections rather than the
+crates.io table. Otherwise attach the existing one.
 
 ## 3. Publish the GitHub release
 
