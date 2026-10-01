@@ -56,6 +56,17 @@ object FipsNative {
     external fun networkHint()
 
     /**
+     * Tell the public-names resolver whether a validated Internet network
+     * exists. Without one its legacy DNS lookup gets a short wait, so a
+     * first offline lookup fails into the mesh path within the budget; the
+     * lookup is not skipped, so a network that works but was never
+     * validated still verifies online. Sent at start and whenever the
+     * answer changes; the shim remembers it across rebinds. No-op if the
+     * engine isn't running.
+     */
+    external fun namesOnline(online: Boolean)
+
+    /**
      * Compact status JSON: `{running, npub, address, status: {...}, relays:
      * [{url, status, connected}]}` — `relays` is the Nostr relay pool with
      * live per-relay state (empty until the node has started it).

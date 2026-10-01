@@ -293,6 +293,9 @@ fn start_inner(
         Some(path) => match crate::names::Names::start(&shim_config, mesh.clone(), path) {
             Ok(n) => {
                 tracing::info!(pins = path, "public domain names over fips on");
+                // A rebind rebuilt the resolver; Kotlin last spoke when the
+                // answer changed, which may be long ago.
+                n.set_internet_validated(INTERNET_VALIDATED.load(Ordering::SeqCst));
                 Some(n)
             }
             Err(e) => {
@@ -489,6 +492,24 @@ pub fn network_hint() {
         if let Some(names) = &engine.names {
             names.network_changed();
         }
+    }
+}
+
+/// Whether a validated (captive-portal-free) Internet network exists, as
+/// Kotlin last said. Remembered here because a rebind rebuilds the names
+/// resolver, which starts out assuming the Internet is there; Kotlin only
+/// speaks up when the answer changes.
+static INTERNET_VALIDATED: AtomicBool = AtomicBool::new(true);
+
+/// Kotlin calls this at start and whenever the answer changes. Applied to
+/// the running resolver now and to every resolver built later.
+pub fn names_online(validated: bool) {
+    INTERNET_VALIDATED.store(validated, Ordering::SeqCst);
+    let slot = ENGINE.lock().unwrap();
+    if let Some(engine) = slot.as_ref()
+        && let Some(names) = &engine.names
+    {
+        names.set_internet_validated(validated);
     }
 }
 

@@ -157,6 +157,17 @@ pub extern "system" fn Java_org_fips_android_FipsNative_networkHint(_env: JNIEnv
     let _ = std::panic::catch_unwind(crate::engine::network_hint);
 }
 
+/// `namesOnline(online)`: the public-names resolver's Internet flag (see
+/// [`crate::engine::names_online`]). Non-blocking; no-op when not running.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_fips_android_FipsNative_namesOnline(
+    _env: JNIEnv,
+    _class: JClass,
+    online: jni::sys::jboolean,
+) {
+    let _ = std::panic::catch_unwind(|| crate::engine::names_online(online != 0));
+}
+
 /// `status()` → JSON (see [`crate::engine::status_json`]).
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_fips_android_FipsNative_status(
