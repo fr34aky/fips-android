@@ -41,6 +41,12 @@ object ConfigStore {
     const val NAMES_WITNESSES = "names_witnesses"
     /** How many witnesses must attest a server (k). */
     const val NAMES_ATTESTATION_K = "names_attestation_k"
+    /**
+     * DNSSEC for public names: validate the domain's DNS record and accept
+     * the DNSSEC proof in its claim. Off, only witnesses vouch offline for a
+     * domain never seen. On by default; off is for testing the witness path.
+     */
+    const val NAMES_DNSSEC = "names_dnssec"
     const val HOTSPOT = "hotspot_enabled"
     const val INBOUND_FILTER = "inbound_filter"
     const val INBOUND_PORTS = "inbound_ports"
@@ -112,6 +118,7 @@ object ConfigStore {
     const val DEF_PUBLIC_NAMES = true
     /** The library's default too (pubdom-resolve `ResolverConfig`). */
     const val DEF_NAMES_ATTESTATION_K = 2
+    const val DEF_NAMES_DNSSEC = true
     const val DEF_HOTSPOT = true
     const val DEF_AUTO_UPDATE = true
     const val DEF_FORWARD_CLEARNET = true
@@ -375,6 +382,19 @@ object ConfigStore {
     /** Public domain names over fips, honouring the default. */
     fun publicNames(context: Context) = prefs(context).getBoolean(PUBLIC_NAMES, DEF_PUBLIC_NAMES)
 
+    /** The verified-domain pins (fips-pub-domains' pin file), next to the hosts file. */
+    fun namesPinsFile(context: Context): java.io.File =
+        HostsStore.file(context).resolveSibling("names-pins.json")
+
+    /**
+     * Forget every verified domain: the next lookup verifies again from the
+     * DNS record, a claim's proof, or the witnesses. Takes effect on the
+     * next connect, which rebuilds the resolver over an absent file; the
+     * running one keeps its pins in memory until then.
+     */
+    fun forgetNamesPins(context: Context): Boolean = namesPinsFile(context).delete()
+    fun namesDnssec(context: Context) = prefs(context).getBoolean(NAMES_DNSSEC, DEF_NAMES_DNSSEC)
+
     /** FIPS Hotspot auto-join, honouring the default. */
     fun hotspotEnabled(context: Context) = prefs(context).getBoolean(HOTSPOT, DEF_HOTSPOT)
 
@@ -445,7 +465,7 @@ object ConfigStore {
         // Sending the path is what turns the feature on in the shim; a name
         // without a verified binding is forwarded to the upstreams as before.
         if (publicNames(context)) {
-            config.put("names_pins_path", HostsStore.file(context).resolveSibling("names-pins.json").absolutePath)
+            config.put("names_pins_path", namesPinsFile(context).absolutePath)
             meshRelays(context).takeIf { it.isNotEmpty() }?.let {
                 config.put("names_mesh_relays", JSONArray(it))
             }
@@ -455,6 +475,9 @@ object ConfigStore {
                 config.put("names_witnesses", JSONArray(it))
                 config.put("names_attestation_threshold", attestationThreshold(context))
             }
+            // Sent whenever public names are on, so the switch means what
+            // it shows whatever the library's default becomes.
+            config.put("names_dnssec", namesDnssec(context))
         }
 
         // Only a customised list is sent; omitted → fips's built-in relays

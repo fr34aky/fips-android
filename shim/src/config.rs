@@ -139,6 +139,13 @@ pub struct ShimConfig {
     /// off. Absent: the library default (2).
     #[serde(default)]
     pub names_attestation_threshold: Option<usize>,
+    /// Validate the `_fips-dns` TXT record with DNSSEC and accept the DNSSEC
+    /// proof carried in a claim (fips-pub-domains spec §4, §5.5). Off, the
+    /// record is taken from plain DNS answers (one resolver's suffices,
+    /// method `dns-single`) and a domain never seen resolves offline
+    /// through witnesses alone. Absent: the library default (on).
+    #[serde(default)]
+    pub names_dnssec: Option<bool>,
     /// Advanced: a full `fips.yaml`. When non-empty it becomes the base
     /// `fips::Config` (all fips parameters — transports, node.*, rendezvous,
     /// dns, lookup, …); the shim then forces the non-negotiable Android bits
@@ -474,11 +481,14 @@ mod tests {
         assert!(c.names_pins_path.is_none());
         assert!(c.names_witnesses.is_empty());
         assert_eq!(c.names_attestation_threshold, None);
+        assert_eq!(c.names_dnssec, None);
         let c = ShimConfig::from_json(&format!(
             r#"{base}, "names_pins_path": "/p/pins.json", "names_mesh_relays": ["ws://x.fips:80"],
-                "names_witnesses": ["npub1abc", "not-an-npub"], "names_attestation_threshold": 1}}"#
+                "names_witnesses": ["npub1abc", "not-an-npub"], "names_attestation_threshold": 1,
+                "names_dnssec": false}}"#
         ))
         .unwrap();
+        assert_eq!(c.names_dnssec, Some(false));
         assert_eq!(c.names_pins_path.as_deref(), Some("/p/pins.json"));
         assert_eq!(c.names_mesh_relays, vec!["ws://x.fips:80"]);
         assert_eq!(c.names_witnesses.len(), 2, "validated by names.rs, not here");

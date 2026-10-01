@@ -126,6 +126,7 @@ impl Names {
             attestation_threshold: config
                 .names_attestation_threshold
                 .unwrap_or(defaults.attestation_threshold),
+            dnssec: config.names_dnssec.unwrap_or(defaults.dnssec),
             ..defaults
         };
         let pins = FilePinStore::open(pins_path).map_err(|e| format!("pins {pins_path}: {e}"))?;

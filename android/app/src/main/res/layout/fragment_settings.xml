@@ -196,6 +196,24 @@
                 <TextView
                     style="@style/Widget.Fips.Summary"
                     android:text="Nodes you trust to have checked a domain online, one npub1… per line — your own other nodes, or a friend\'s. Without internet, a domain never seen whose claim carries no DNSSEC proof is used once this many of them vouch for its server, through the mesh relays above. Only these keys are asked for; blank: attestations are not used. 0 witnesses that must agree also turns them off." />
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/names_dnssec"
+                    style="@style/Widget.Fips.SettingSwitch"
+                    android:layout_marginTop="8dp"
+                    android:text="DNSSEC for public names" />
+                <TextView
+                    style="@style/Widget.Fips.Summary"
+                    android:text="Validate a domain\'s DNS record with DNSSEC and accept the DNSSEC proof carried in its claim, which lets a domain never seen verify without internet. Leave this on. Off, the record is taken from plain DNS answers, and without internet only the witnesses above vouch — useful to test them." />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/names_forget_pins"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Forget verified domains" />
+                <TextView
+                    style="@style/Widget.Fips.Summary"
+                    android:text="Drops every domain verified so far; each is verified again at its next lookup — from its DNS record, its claim\'s proof, or the witnesses. Reconnect to apply." />
                 <View style="@style/Widget.Fips.Divider" />
                 <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/hotspot"
