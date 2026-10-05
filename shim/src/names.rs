@@ -15,8 +15,10 @@
 //! node's `fd…` address. Everything else is [`Outcome::Legacy`], and the
 //! proxy forwards to the upstreams exactly as before — or
 //! [`Outcome::Pending`] when the lookup overran its budget and is still
-//! deciding, which forwards too but with the answer's TTLs capped. A name
-//! that is not over fips is never made unreachable by this code.
+//! deciding, which forwards too but with the answer's TTLs capped, or
+//! [`Outcome::Early`] when one upstream has already denied the record and
+//! the legacy answer need not wait for the rest. A name that is not over
+//! fips is never made unreachable by this code.
 
 use std::net::{IpAddr, SocketAddrV6, UdpSocket};
 use std::sync::Arc;
@@ -35,7 +37,7 @@ use crate::meshtcp::MeshRelayProxy;
 
 /// The whole lookup must fit inside what an app's resolver waits for (5 s on
 /// bionic) with room for the legacy fallback after it.
-const BUDGET: Duration = Duration::from_millis(3500);
+pub(crate) const BUDGET: Duration = Duration::from_millis(3500);
 
 /// What the DNS proxy asks: a complete reply, or what to do with the
 /// legacy one.
@@ -51,10 +53,33 @@ pub enum Outcome {
     /// wildcard's address for its 300 s otherwise, and the cached decision
     /// was never asked for.
     Pending,
+    /// Still deciding, but one upstream has already said that no domain
+    /// this name could belong to has a record: the upstreams' answer goes
+    /// out now instead of after the slowest upstream has agreed. The
+    /// closure waits up to the given time for the decision — asked while
+    /// and after the legacy answer is fetched, it turns this into `Answer`
+    /// or `Legacy` after all; while it returns `None` the answer goes out
+    /// short-lived, as for `Pending`. (A decision that was cached also
+    /// arrives this way, and is in at the first ask.)
+    Early(Box<dyn FnMut(Duration) -> Option<Decided> + Send>),
+}
+
+/// What a lookup that was [`Outcome::Early`] turned out to be.
+pub enum Decided {
+    Answer(Vec<u8>),
+    Legacy,
 }
 
 pub trait Lookup: Send + Sync {
     fn lookup(&self, query: &[u8]) -> Outcome;
+
+    /// Whether the legacy answer may be fetched while `lookup` runs. Almost
+    /// every name is not over fips and its answer should not wait for us
+    /// to find that out; not for a name under a pinned domain, which is
+    /// answered from the pin without the upstream hearing of it.
+    fn prefetch_legacy(&self, _query: &[u8]) -> bool {
+        false
+    }
 }
 
 pub struct Names {
@@ -222,19 +247,58 @@ impl Lookup for Names {
         // resolver makes after that is answered at once. Cancelling it
         // instead meant a slow path (offline: TXT timeout, then a mesh
         // relay) never finished, however often it was asked.
-        let task = rt.spawn(async move { resolver.lookup(&q).await });
-        match rt.block_on(async { tokio::time::timeout(BUDGET, task).await }) {
-            Ok(Ok(LookupResult::Answer(a))) => Outcome::Answer(a),
-            Ok(Ok(LookupResult::Passthrough)) => Outcome::Legacy,
-            Ok(Err(e)) => {
+        let mut task = rt.spawn({
+            let (resolver, q) = (resolver.clone(), q.clone());
+            async move { resolver.lookup(&q).await }
+        });
+        let settled = rt.block_on(async {
+            tokio::select! {
+                biased;
+                joined = tokio::time::timeout(BUDGET, &mut task) => Some(joined),
+                // One upstream's "no record" for every candidate domain
+                // (only with the plain probe, so only with a validated
+                // Internet — `PhoneTxt`): do not hold the legacy answer
+                // back for the other upstreams.
+                _ = resolver.denied_by_an_upstream(&q), if resolver.txt().probes() => None,
+            }
+        });
+        match settled {
+            Some(Ok(Ok(LookupResult::Answer(a)))) => Outcome::Answer(a),
+            Some(Ok(Ok(LookupResult::Passthrough))) => Outcome::Legacy,
+            Some(Ok(Err(e))) => {
                 tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
                 Outcome::Legacy
             }
-            Err(_) => {
+            Some(Err(_)) => {
                 tracing::info!("public-name lookup still running after its budget; using the legacy answer briefly");
                 Outcome::Pending
             }
+            None => {
+                let handle = rt.handle().clone();
+                let mut task = Some(task);
+                Outcome::Early(Box::new(move |wait| {
+                    let running = task.as_mut()?;
+                    let joined = handle.block_on(async { tokio::time::timeout(wait, running).await }).ok()?;
+                    task = None;
+                    Some(match joined {
+                        Ok(LookupResult::Answer(a)) => Decided::Answer(a),
+                        Ok(LookupResult::Passthrough) => Decided::Legacy,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
+                            Decided::Legacy
+                        }
+                    })
+                }))
+            }
         }
+    }
+
+    fn prefetch_legacy(&self, query: &[u8]) -> bool {
+        // Only where an early release can follow: without the plain probe
+        // (no validated Internet) the answer waits for the decision
+        // anyway, and whatever still answers DNS there need not be asked
+        // ahead of it.
+        self.resolver.txt().probes() && !self.resolver.has_pin_for(query)
     }
 }
 
