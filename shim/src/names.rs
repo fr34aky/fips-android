@@ -51,10 +51,32 @@ pub enum Outcome {
     /// wildcard's address for its 300 s otherwise, and the cached decision
     /// was never asked for.
     Pending,
+    /// Still deciding, but one upstream has already said that no domain
+    /// this name could belong to has a record: the upstreams' answer goes
+    /// out now instead of after the slowest upstream has agreed. The
+    /// closure says whether the decision has come in since — asked while
+    /// and after the legacy answer is fetched, it turns this into `Answer`
+    /// or `Legacy` after all; while it returns `None` the answer goes out
+    /// short-lived, as for `Pending`.
+    Early(Box<dyn FnMut() -> Option<Decided> + Send>),
+}
+
+/// What a lookup that was [`Outcome::Early`] turned out to be.
+pub enum Decided {
+    Answer(Vec<u8>),
+    Legacy,
 }
 
 pub trait Lookup: Send + Sync {
     fn lookup(&self, query: &[u8]) -> Outcome;
+
+    /// Whether the legacy answer may be fetched while `lookup` runs. Almost
+    /// every name is not over fips and its answer should not wait for us
+    /// to find that out; not for a name under a pinned domain, which is
+    /// answered from the pin without the upstream hearing of it.
+    fn prefetch_legacy(&self, _query: &[u8]) -> bool {
+        false
+    }
 }
 
 pub struct Names {
@@ -222,19 +244,50 @@ impl Lookup for Names {
         // resolver makes after that is answered at once. Cancelling it
         // instead meant a slow path (offline: TXT timeout, then a mesh
         // relay) never finished, however often it was asked.
-        let task = rt.spawn(async move { resolver.lookup(&q).await });
-        match rt.block_on(async { tokio::time::timeout(BUDGET, task).await }) {
-            Ok(Ok(LookupResult::Answer(a))) => Outcome::Answer(a),
-            Ok(Ok(LookupResult::Passthrough)) => Outcome::Legacy,
-            Ok(Err(e)) => {
+        let mut task = rt.spawn({
+            let (resolver, q) = (resolver.clone(), q.clone());
+            async move { resolver.lookup(&q).await }
+        });
+        let settled = rt.block_on(async {
+            tokio::select! {
+                biased;
+                joined = tokio::time::timeout(BUDGET, &mut task) => Some(joined),
+                // One upstream's "no record" for every candidate domain
+                // (only with the plain probe, so only with a validated
+                // Internet — `PhoneTxt`): do not hold the legacy answer
+                // back for the other upstreams.
+                _ = resolver.denied_by_an_upstream(&q) => None,
+            }
+        });
+        match settled {
+            Some(Ok(Ok(LookupResult::Answer(a)))) => Outcome::Answer(a),
+            Some(Ok(Ok(LookupResult::Passthrough))) => Outcome::Legacy,
+            Some(Ok(Err(e))) => {
                 tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
                 Outcome::Legacy
             }
-            Err(_) => {
+            Some(Err(_)) => {
                 tracing::info!("public-name lookup still running after its budget; using the legacy answer briefly");
                 Outcome::Pending
             }
+            None => {
+                let handle = rt.handle().clone();
+                let mut task = Some(task);
+                Outcome::Early(Box::new(move || {
+                    if !task.as_ref()?.is_finished() {
+                        return None;
+                    }
+                    Some(match handle.block_on(task.take()?) {
+                        Ok(LookupResult::Answer(a)) => Decided::Answer(a),
+                        _ => Decided::Legacy,
+                    })
+                }))
+            }
         }
+    }
+
+    fn prefetch_legacy(&self, query: &[u8]) -> bool {
+        !self.resolver.has_pin_for(query)
     }
 }
 
