@@ -26,7 +26,7 @@ use pubdom_core::Npub;
 use pubdom_resolve::config::MaybeTxt;
 use pubdom_resolve::mesh::MeshDns;
 use pubdom_resolve::relay::RelayClient;
-use pubdom_resolve::resolver::{LookupResult, Resolver, ResolverConfig};
+use pubdom_resolve::resolver::{LookupResult, Probe, Resolver, ResolverConfig, TxtSource};
 use pubdom_resolve::FilePinStore;
 
 use crate::config::ShimConfig;
@@ -62,7 +62,7 @@ pub struct Names {
     /// proxy is blocking, and `block_on` from its thread drives the future
     /// while the worker keeps the relay pool alive.
     rt: Option<tokio::runtime::Runtime>,
-    resolver: Arc<Resolver<MaybeTxt, RelayClient>>,
+    resolver: Arc<Resolver<PhoneTxt, RelayClient>>,
     /// The mesh relays' loopback listeners; they stop when this drops.
     _relays: Vec<MeshRelayProxy>,
 }
@@ -136,7 +136,7 @@ impl Names {
         let txt = MaybeTxt::new(&upstreams, rc.dnssec, rc.txt_timeout)?;
         let resolver = rt.block_on(async {
             let relays = RelayClient::new(&rc.public_relays, &rc.mesh_relays, rc.relay_timeout).await;
-            Resolver::new(rc, Arc::new(pins), txt, relays, Arc::new(PhoneMesh { link }))
+            Resolver::new(rc, Arc::new(pins), PhoneTxt(txt), relays, Arc::new(PhoneMesh { link }))
         });
         Ok(Arc::new(Self { rt: Some(rt), resolver: Arc::new(resolver), _relays: proxies }))
     }
@@ -155,13 +155,15 @@ impl Names {
     /// validated (a captive-portal probe blocked) must still verify online,
     /// and the resolver keeps believing it is online, so its relay scope
     /// stays mesh-only without a TXT hit — no public relay learns a domain.
+    /// It also decides whether a domain with no pin is probed plainly first
+    /// ([`PhoneTxt`]).
     pub fn set_internet_validated(&self, validated: bool) {
         let want = if validated { TXT_TIMEOUT_ONLINE } else { TXT_TIMEOUT_UNVALIDATED };
-        if self.resolver.txt().timeout() == want {
+        if self.resolver.txt().0.timeout() == want {
             return;
         }
         tracing::info!(validated, txt_timeout_ms = want.as_millis(), "public names: internet validation changed");
-        if let Err(e) = self.resolver.txt().set_timeout(want) {
+        if let Err(e) = self.resolver.txt().0.set_timeout(want) {
             tracing::warn!(error = %e, "could not change the TXT verifier's timeout");
             return;
         }
@@ -175,6 +177,37 @@ const TXT_TIMEOUT_ONLINE: Duration = Duration::from_millis(1500);
 /// that a first offline lookup — this, the mesh relay, step 3, the echo —
 /// fits the 3.5 s budget.
 const TXT_TIMEOUT_UNVALIDATED: Duration = Duration::from_millis(500);
+
+/// The library's TXT source, with its plain probe (fips-pub-domains 0.2.4:
+/// a domain with no pin is asked for its record without validation first,
+/// and "no record" ends the lookup) used only while a validated Internet
+/// network exists. Without one the resolvers that still answer are a
+/// router with no uplink or a captive portal, and their plain "no record"
+/// would end in the legacy answer where the validated lookup fails and
+/// sends the resolver to the mesh relays — the offline path this app
+/// exists for. It would also make an offline lookup wait twice, once for
+/// the probe and once for the lookup, which the budget has no room for.
+struct PhoneTxt(MaybeTxt);
+
+impl PhoneTxt {
+    fn probes(&self) -> bool {
+        self.0.timeout() > TXT_TIMEOUT_UNVALIDATED
+    }
+}
+
+impl TxtSource for PhoneTxt {
+    async fn lookup(&self, domain: &str) -> (pubdom_core::policy::TxtLookup, Option<u32>) {
+        self.0.lookup(domain).await
+    }
+
+    async fn probe(&self, domain: &str, first_denial: &(dyn Fn() + Sync)) -> Probe {
+        if self.probes() {
+            self.0.probe(domain, first_denial).await
+        } else {
+            Probe::Unknown
+        }
+    }
+}
 
 impl Lookup for Names {
     fn lookup(&self, query: &[u8]) -> Outcome {
@@ -253,5 +286,24 @@ impl MeshDns for PhoneMesh {
             Ok(n) if n >= 12 && buf[..2] == id.to_be_bytes() => buf[3] & 0x0f == 0,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The plain probe runs only with a validated Internet: without one a
+    /// plain "no record" from whatever still answers must not end the
+    /// lookup before the mesh path.
+    #[test]
+    fn the_plain_probe_needs_a_validated_internet() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let txt = PhoneTxt(MaybeTxt::new(&[], true, TXT_TIMEOUT_UNVALIDATED).unwrap());
+        assert_eq!(rt.block_on(txt.probe("example.org", &|| {})), Probe::Unknown);
+        // Validated: the library's probe answers (no upstreams here, so
+        // "unreachable" — the point is that it was asked).
+        txt.0.set_timeout(TXT_TIMEOUT_ONLINE).unwrap();
+        assert_eq!(rt.block_on(txt.probe("example.org", &|| {})), Probe::Unreachable);
     }
 }

@@ -2810,8 +2810,8 @@ checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 
 [[package]]
 name = "pubdom-core"
-version = "0.2.3"
-source = "git+https://github.com/fr34aky/fips-pub-domains?rev=fd0e8fc#fd0e8fcdace909185e2de3b935bd90dab36e7743"
+version = "0.2.4"
+source = "git+https://github.com/fr34aky/fips-pub-domains?rev=a4bb0fc#a4bb0fc012a273d8dc5f2f7c8fd75cdaa9a3cc0d"
 dependencies = [
  "bech32 0.11.1",
  "hex",
@@ -2825,8 +2825,8 @@ dependencies = [
 
 [[package]]
 name = "pubdom-resolve"
-version = "0.2.3"
-source = "git+https://github.com/fr34aky/fips-pub-domains?rev=fd0e8fc#fd0e8fcdace909185e2de3b935bd90dab36e7743"
+version = "0.2.4"
+source = "git+https://github.com/fr34aky/fips-pub-domains?rev=a4bb0fc#a4bb0fc012a273d8dc5f2f7c8fd75cdaa9a3cc0d"
 dependencies = [
  "base64",
  "futures",
