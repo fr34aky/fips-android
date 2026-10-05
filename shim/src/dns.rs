@@ -14,6 +14,10 @@
 //!
 //! Each query is served on a short-lived thread (blocking send/recv with a
 //! timeout); DNS is low-rate and this keeps the pump loop non-blocking.
+//! Where the public-names resolver allows it (no pinned domain above the
+//! name, a validated Internet) a second thread asks the upstreams while
+//! the resolver decides, so a name that is not over fips does not wait
+//! for both in turn.
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::mpsc::Sender;
@@ -25,9 +29,9 @@ use fips::upper::hosts::{HostMap, HostMapReloader};
 use crate::packet;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(3);
-/// How often a released lookup's decision is looked at while its legacy
-/// answer is still on the way.
-const EARLY_POLL: Duration = Duration::from_millis(20);
+/// How long a released lookup's decision is waited for between looks at
+/// whether its legacy answer has arrived.
+const EARLY_POLL: Duration = Duration::from_millis(5);
 const MAX_RESPONSE: usize = 4096;
 
 /// Shared context for the DNS proxy.
@@ -146,7 +150,8 @@ impl DnsProxy {
                 pubdom_core::synth::clamp_ttls(&legacy, pubdom_core::OVERRUN_TTL_SECS).unwrap_or(legacy)
             };
             let forward = |prefetched: Option<std::sync::mpsc::Receiver<Option<Vec<u8>>>>| match prefetched {
-                Some(rx) => rx.recv().ok().flatten(),
+                // A dead fetching thread must not cost the answer.
+                Some(rx) => rx.recv().unwrap_or_else(|_| self.forward_upstreams(query.payload)),
                 None => self.forward_upstreams(query.payload),
             };
             match self.names.as_ref().map(|n| n.lookup(query.payload)) {
@@ -160,34 +165,47 @@ impl DnsProxy {
                     forward(prefetched).map(clamp)
                 }
                 Some(Outcome::Early(mut decided)) => {
-                    // Wait for the legacy answer, but keep an eye on the
-                    // decision: if it comes in first it is the answer, and
-                    // an answer over fips must not sit behind a slow
-                    // upstream.
-                    let mut legacy = None;
-                    let outcome = loop {
-                        if let Some(d) = decided() {
-                            break Some(d);
+                    // Wait for the legacy answer and the decision at once.
+                    // A decision that was cached is in right away; one
+                    // that arrives before the upstream's answer is the
+                    // answer, so a name over fips never sits behind a slow
+                    // upstream; and when the upstreams give nothing, the
+                    // decision is all that is left to wait for.
+                    let give_up = std::time::Instant::now() + crate::names::BUDGET;
+                    let mut outcome = decided(EARLY_POLL);
+                    let mut legacy: Option<Option<Vec<u8>>> = None;
+                    while outcome.is_none() {
+                        match &legacy {
+                            None => {
+                                legacy = Some(match &prefetched {
+                                    Some(rx) => match rx.try_recv() {
+                                        Ok(reply) => reply,
+                                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                                            outcome = decided(EARLY_POLL);
+                                            continue;
+                                        }
+                                        // The fetching thread died: ask here.
+                                        Err(std::sync::mpsc::TryRecvError::Disconnected) => self.forward_upstreams(query.payload),
+                                    },
+                                    None => self.forward_upstreams(query.payload),
+                                });
+                                outcome = decided(Duration::ZERO);
+                            }
+                            Some(Some(_)) => break,
+                            Some(None) if std::time::Instant::now() >= give_up => break,
+                            Some(None) => outcome = decided(EARLY_POLL),
                         }
-                        if legacy.is_some() {
-                            break None;
-                        }
-                        legacy = Some(match &prefetched {
-                            Some(rx) => match rx.recv_timeout(EARLY_POLL) {
-                                Ok(reply) => reply,
-                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
-                            },
-                            None => self.forward_upstreams(query.payload),
-                        });
-                    };
+                    }
                     match outcome {
                         Some(Decided::Answer(a)) => {
                             tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name answered over fips");
                             Some(a)
                         }
                         Some(Decided::Legacy) => legacy.unwrap_or_else(|| forward(prefetched)),
-                        None => legacy.flatten().map(clamp),
+                        None => {
+                            tracing::debug!(qname = %qname, "public name released on an upstream's denial; legacy answer for a few seconds");
+                            legacy.flatten().map(clamp)
+                        }
                     }
                 }
                 Some(Outcome::Legacy) | None => forward(prefetched),
@@ -709,7 +727,6 @@ mod tests {
     #[test]
     fn an_early_release_follows_the_decision_that_arrives_meanwhile() {
         use crate::names::{Decided, Outcome};
-        use std::sync::atomic::{AtomicUsize, Ordering};
         /// `after`: how many times the decision is asked before it is in.
         struct Released {
             after: usize,
@@ -718,10 +735,11 @@ mod tests {
         impl crate::names::Lookup for Released {
             fn lookup(&self, query: &[u8]) -> Outcome {
                 let (after, over_fips) = (self.after, self.over_fips);
-                let asked = AtomicUsize::new(0);
+                let mut asked = 0;
                 let q = pubdom_core::synth::parse_query(query).unwrap();
-                Outcome::Early(Box::new(move || {
-                    if asked.fetch_add(1, Ordering::Relaxed) < after {
+                Outcome::Early(Box::new(move |_wait| {
+                    asked += 1;
+                    if asked <= after {
                         return None;
                     }
                     Some(if over_fips {
@@ -756,9 +774,9 @@ mod tests {
         assert_eq!(&reply[reply.len() - 4..], &[217, 26, 48, 101]);
         assert_eq!(ttl(&reply), pubdom_core::OVERRUN_TTL_SECS);
 
-        // Decided "not over fips" by the time the legacy answer is in: as
-        // the upstream sent it.
-        let (proxy, replies) = proxy_for(slow_upstream(Duration::from_millis(100)), Released { after: 2, over_fips: false });
+        // Decided "not over fips" at once (a cached decision): as the
+        // upstream sent it.
+        let (proxy, replies) = proxy_for(slow_upstream(Duration::from_millis(50)), Released { after: 0, over_fips: false });
         let reply = ask(&proxy, &replies, &query);
         assert_eq!(ttl(&reply), 300);
 
@@ -769,6 +787,13 @@ mod tests {
         let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", 28));
         assert!(started.elapsed() < Duration::from_secs(1), "waited for the upstream");
         assert_eq!(reply[6..8], [0, 2], "our CNAME and AAAA, not the upstream's one A");
+
+        // No upstream answers at all: the decision is waited for, and an
+        // answer over fips still arrives instead of SERVFAIL.
+        let dead = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let (proxy, replies) = proxy_for(dead, Released { after: 40, over_fips: true });
+        let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", 28));
+        assert_eq!(reply[6..8], [0, 2]);
     }
 
     /// A reply that does not parse must become SERVFAIL, not a panic.
