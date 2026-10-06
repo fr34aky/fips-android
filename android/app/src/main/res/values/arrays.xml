@@ -4,6 +4,11 @@
         <item>udp</item>
         <item>tcp</item>
     </string-array>
+    <string-array name="themes">
+        <item>dark</item>
+        <item>light</item>
+        <item>system</item>
+    </string-array>
     <string-array name="log_levels">
         <item>error</item>
         <item>warn</item>

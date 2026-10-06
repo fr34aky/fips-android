@@ -58,6 +58,8 @@ object ConfigStore {
     const val INBOUND_FILTER = "inbound_filter"
     const val INBOUND_PORTS = "inbound_ports"
     const val LOG_LEVEL = "log_level"
+    /** `dark` (the default), `light` or `system`: the app's colour scheme. */
+    const val THEME = "theme"
 
     /**
      * Also peer with two more public bootstrap servers ([FALLBACK_BOOTSTRAPS])
@@ -132,6 +134,8 @@ object ConfigStore {
     const val DEF_FORWARD_CLEARNET = true
     const val DEF_WORKER_THREADS = 1
     const val DEF_LOG_LEVEL = "info"
+    const val DEF_THEME = "dark"
+    val THEMES = listOf("dark", "light", "system")
     const val DEF_BOOTSTRAP_FALLBACKS = true
     const val DEF_NOSTR_DISCOVERY = false
     const val DEF_HOSTS_SYNC = false
@@ -412,6 +416,7 @@ object ConfigStore {
         if (!p.contains(FORWARD_CLEARNET)) e.putBoolean(FORWARD_CLEARNET, DEF_FORWARD_CLEARNET)
         if (!p.contains(WORKER_THREADS)) e.putInt(WORKER_THREADS, DEF_WORKER_THREADS)
         if (!p.contains(LOG_LEVEL)) e.putString(LOG_LEVEL, DEF_LOG_LEVEL)
+        if (!p.contains(THEME)) e.putString(THEME, DEF_THEME)
         if (!p.contains(BOOTSTRAP_FALLBACKS)) {
             e.putBoolean(BOOTSTRAP_FALLBACKS, DEF_BOOTSTRAP_FALLBACKS)
         }
@@ -438,6 +443,24 @@ object ConfigStore {
      */
     fun forgetNamesPins(context: Context): Boolean = namesPinsFile(context).delete()
     fun namesDnssec(context: Context) = prefs(context).getBoolean(NAMES_DNSSEC, DEF_NAMES_DNSSEC)
+
+    fun theme(context: Context): String =
+        prefs(context).getString(THEME, DEF_THEME)?.takeIf { it in THEMES } ?: DEF_THEME
+
+    /**
+     * Apply the stored colour scheme to every activity. Called before the
+     * first activity is created ([FipsApplication]) and when Settings saves
+     * a change, which recreates the visible activity.
+     */
+    fun applyTheme(context: Context) {
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+            when (theme(context)) {
+                "light" -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+                "system" -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+                else -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+            }
+        )
+    }
 
     /** FIPS Hotspot auto-join, honouring the default. */
     fun hotspotEnabled(context: Context) = prefs(context).getBoolean(HOTSPOT, DEF_HOTSPOT)

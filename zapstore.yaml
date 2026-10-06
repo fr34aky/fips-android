@@ -33,20 +33,29 @@ summary: Reach the FIPS mesh from your phone, on the apps you choose
 
 description: |
   fips2go runs a FIPS mesh node on your phone and hands it to the apps you
-  pick, over a per-app VPN tunnel. Selected apps reach `.fips` names on the
-  mesh **and** keep normal internet; every other app on the device is
-  untouched.
+  pick, over a per-app VPN tunnel. Selected apps reach the mesh **and** keep
+  normal internet; every other app on the device is untouched.
 
   - **Per-app split tunnel.** You choose which apps join the mesh. They get the
     mesh and clearnet at once; nothing else on the phone is affected. With no
     apps selected the tunnel does nothing.
   - **`.fips` names just resolve.** DNS for covered apps is answered in-process
     for `.fips`, and forwarded to your normal resolvers for everything else.
+  - **Mesh names.** An address book maps readable names to nodes —
+    `home.fips` instead of an npub — for every covered app, and can be synced
+    from a node you run.
+  - **Public domain names over fips.** A site bound to a mesh node
+    (fips-pub-domains) is reached by its ordinary name, verified with DNSSEC
+    and pinned; already verified domains, and those with a signed claim on a
+    mesh relay, keep resolving with no internet at all. Everything else
+    resolves as before.
   - **Default-deny inbound firewall.** Other mesh nodes cannot reach ports your
     apps listen on. Only replies to connections you opened, ICMPv6, and an
     explicit port allowlist get through.
   - **Identity sealed by the Android Keystore**, with backup and restore so it
     survives a reinstall.
+  - **Three links into the mesh, not one**, plus optional peer discovery via
+    Nostr and your own choice of relays.
   - **FIPS Hotspot.** Auto-joins open Wi-Fi named `!FIPS` to reach nearby
     peers, while your internet stays on your normal network.
   - **LAN discovery (mDNS).** Finds peers on your Wi-Fi and dials them
@@ -55,6 +64,8 @@ description: |
     session and route; peers are re-pinned within a second, no reconnect.
   - **Diagnostics.** Resolve or ping an npub, inspect live peer sessions, and
     read the node log.
+  - **In-app updates**, verified against the release checksum. Dark theme by
+    default.
 
   Open source (MIT), no accounts, no telemetry. Requires Android 8.0 or later.
 
@@ -70,3 +81,4 @@ images:
   - ./docs/screenshots/settings.png
   - ./docs/screenshots/diagnostics.png
   - ./docs/screenshots/app-picker.png
+  - ./docs/screenshots/relays.png

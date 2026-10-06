@@ -11,11 +11,13 @@ tunnel with a userspace forwarder).
 |---|---|---|---|
 | ![Overview: connected to the mesh](docs/screenshots/overview.png) | ![Settings](docs/screenshots/settings.png) | ![Diagnostics](docs/screenshots/diagnostics.png) | ![Per-app split tunnel](docs/screenshots/app-picker.png) |
 
-| Dark mode | Nostr relays |
+| Light theme | Nostr relays |
 |---|---|
-| ![Overview in dark mode](docs/screenshots/overview-dark.png) | ![Add and remove Nostr relays](docs/screenshots/relays.png) |
+| ![Overview in the light theme](docs/screenshots/overview-light.png) | ![Add and remove Nostr relays](docs/screenshots/relays.png) |
 
-<sub>Captured on the x86_64 emulator, joined to the live public mesh.</sub>
+<sub>Captured on a Pixel 9 Pro joined to the live public mesh. The app is
+dark by default; Settings → Appearance switches to light or to following
+the system.</sub>
 
 ## Features
 
@@ -32,6 +34,17 @@ usable on a device you also use for everything else.
   `.fips` names are answered by the built-in resolver, everything else goes to
   your normal upstreams. A `.fips` hostname works in the browser with nothing
   to configure.
+- **Public domain names over fips.** A site owner who binds `www.example.org`
+  to a mesh node (a `_fips-dns` TXT record plus a signed claim on Nostr —
+  [fips-pub-domains](https://github.com/fr34aky/fips-pub-domains)) is reached
+  over the mesh by name, in any covered app, with the ordinary Internet
+  address as the fallback. The binding is verified before it is used (DNSSEC
+  where the zone is signed, two resolvers otherwise) and then pinned; a domain
+  already verified, or one whose claim carries a DNSSEC proof, keeps resolving
+  with no Internet at all through a relay on the mesh, and nodes you trust
+  can vouch for others (Settings → *Public domain names over fips*).
+  Everything else resolves exactly as before, and the first lookup of an
+  ordinary name does not wait for the decision.
 - **Mesh names.** An address book on Overview maps readable names to npubs —
   `home.fips` instead of `npub1k3ae….fips` — for every mesh app, like a hosts
   file (it *is* one: fips's `name npub` format). Names are local to the
@@ -100,6 +113,8 @@ usable on a device you also use for everything else.
 - **Battery-aware.** A saver profile relaxes the maintenance tick and halves
   heartbeats, measured at ~40% less idle CPU; the packet pump idles at
   essentially zero wakeups.
+- **Dark by default.** The whole app uses a dark Material 3 scheme unless
+  Settings → Appearance says light, or to follow the phone.
 
 Standalone repo — it depends on fips as a pinned **git dependency**
 (`fr34aky/fips` @ `android-hooks`, upstream v0.5.1+ plus the small embedder
@@ -113,7 +128,7 @@ without a sibling fips checkout.
 
 | Path | What |
 |---|---|
-| `shim/` | Rust cdylib `libfips_android.so`: engine (node lifecycle), TUN fd pump, DNS proxy, clearnet forwarder, JNI surface (`org.fips.android.FipsNative`). |
+| `shim/` | Rust cdylib `libfips_android.so`: engine (node lifecycle), TUN fd pump, DNS proxy, clearnet forwarder, the public-names resolver and its mesh transports (`names.rs`, `meshudp.rs`, `meshtcp.rs`, on the `pubdom-*` crates), JNI surface (`org.fips.android.FipsNative`). |
 | `android/` | The Kotlin app (Material 3, bottom-nav): Overview / Settings / Diagnostics, `FipsVpnService` (per-app split tunnel, protect callback, foreground service). |
 | `smoke/` | Two-node host smoke test of the embedding seam. |
 | `android-env.sh` | Cross-build env: NDK r27c paths + the `LIBCLANG_PATH` fix for host builds. |
@@ -251,9 +266,12 @@ fips = { path = "../fips" }   # your local fips checkout on android-hooks
   in the pump. `.fips` names go to the in-process FIPS responder
   (`[::1]:5354`) — a name from the app's hosts file (`hosts_path`) is first
   re-asked as `<npub>.fips`, and the answer re-issued under the name the app
-  used; everything else is forwarded to upstream resolvers over
-  protected sockets (SERVFAIL on total failure). Configurable via
-  `dns_upstreams`.
+  used; every other name is first offered to the public-names resolver
+  (a domain bound to a mesh node answers with that node's `fd…` address,
+  verified and pinned — see
+  [fips-pub-domains' android.md](https://github.com/fr34aky/fips-pub-domains/blob/main/docs/android.md))
+  and otherwise forwarded to upstream resolvers over protected sockets
+  (SERVFAIL on total failure). Configurable via `dns_upstreams`.
 - **Socket protection**: the node announces every underlay socket fd to the
   shim's hook, which crosses JNI to `VpnService.protect()`. Covered: UDP
   listen/adopted/connected-peer, TCP listener/accepted/dialed (pre-SYN),
@@ -321,8 +339,12 @@ fips = { path = "../fips" }   # your local fips checkout on android-hooks
   tunnel, non-functional under "Block connections without VPN". BLE/Ethernet
   transports are not available on Android. ICMP to clearnet is not
   forwarded (TCP/UDP are).
-- Signed per-ABI releases are published on GitHub Releases, and the app can
-  update itself: *Check for updates* (Diagnostics) downloads the ABI-matching
+- Public domain names are device-verified with a real bound domain: online
+  (first-visit discovery and pinning), offline from a pin, offline from the
+  claim's DNSSEC proof through a mesh relay, and offline through witnesses'
+  attestations (fips-pub-domains' `docs/testing.md`, levels 5–5c).
+- Signed per-ABI releases are published on GitHub Releases and on
+  [Zapstore](https://zapstore.dev), and the app can update itself: *Check for updates* (Diagnostics) downloads the ABI-matching
   APK, verifies it against the release's sha256, and hands it to the system
   installer — which only proceeds with the VPN disconnected and enforces the
   release signing key (identity and settings survive; verified live by

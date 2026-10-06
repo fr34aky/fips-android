@@ -258,6 +258,31 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <TextView style="@style/SettingsHeader" android:text="Appearance" />
+        <com.google.android.material.card.MaterialCardView style="@style/Widget.Fips.Card">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Theme">
+                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                        android:id="@+id/theme"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="none"
+                        app:simpleItems="@array/themes" />
+                </com.google.android.material.textfield.TextInputLayout>
+                <TextView
+                    style="@style/Widget.Fips.Summary"
+                    android:text="Dark is the default. System follows the phone's dark-mode setting. Applies when saved." />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Advanced: collapsed by default. Nothing in here needs touching
              for a normal connection. -->
         <com.google.android.material.card.MaterialCardView
