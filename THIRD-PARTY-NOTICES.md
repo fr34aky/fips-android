@@ -17,9 +17,9 @@ which adds the embedder hooks under the same license).
 
 [fips-pub-domains](https://github.com/fr34aky/fips-pub-domains) v0.2.5
 (`pubdom-core`, `pubdom-resolve`; git dependency at rev 231acb8, the
-commit tagged v0.2.5) — MIT
-License, Copyright (c) fr34aky. Public domain names over fips: the
-verification policy and the resolver this app's DNS proxy runs.
+commit tagged v0.2.5) — MIT License, Copyright (c) fr34aky. Public
+domain names over fips: the verification policy and the resolver this
+app's DNS proxy runs.
 
 ## Android app dependencies
 
