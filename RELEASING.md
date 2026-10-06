@@ -207,6 +207,20 @@ that needs a real TTY.
 > do: silent exit 0". **Exit 0 does not mean it published.** Always verify
 > against the relay.
 
+**Listing text or screenshots changed, no new release?** Plain `zsp publish`
+is "nothing to do" then and exits 0 without touching the relay (seen
+2026-10-06). `--overwrite-release` makes it re-sign and re-publish the
+current release's events together with the kind-32267 app event, which is
+what carries `description`, `summary` and `images`:
+
+```bash
+SIGN_WITH=$(cat ~/.zsp-nsec) zsp publish -q --skip-preview --overwrite-release zapstore.yaml
+```
+
+The release events are byte-for-byte about the same APK (same `x`, same
+`size`), so re-publishing them is harmless. Verify the app event's
+`created_at` moved (step 7, kind 32267 instead of 30063).
+
 Optional pre-flight (no signing, no publishing):
 
 ```bash
