@@ -207,9 +207,12 @@ impl DnsProxy {
                             Some(a)
                         }
                         Some(Decided::Legacy) => legacy.unwrap_or_else(|| forward(prefetched)),
-                        Some(Decided::Capped(cap)) => legacy
-                            .unwrap_or_else(|| forward(prefetched))
-                            .map(|l| clamp_to(l, cap)),
+                        Some(Decided::Capped(cap)) => {
+                            tracing::info!(qname = %qname, qtype = qtype_of(query.payload), cap, "public name unavailable over fips; legacy answer until the retry");
+                            legacy
+                                .unwrap_or_else(|| forward(prefetched))
+                                .map(|l| clamp_to(l, cap))
+                        }
                         None => {
                             tracing::debug!(qname = %qname, "public name released on an upstream's denial; legacy answer for a few seconds");
                             legacy.flatten().map(clamp)
@@ -739,10 +742,12 @@ mod tests {
         struct Released {
             after: usize,
             over_fips: bool,
+            /// Decided "over fips, but unreachable now": the cap.
+            capped: Option<u32>,
         }
         impl crate::names::Lookup for Released {
             fn lookup(&self, query: &[u8]) -> Outcome {
-                let (after, over_fips) = (self.after, self.over_fips);
+                let (after, over_fips, capped) = (self.after, self.over_fips, self.capped);
                 let mut asked = 0;
                 let q = pubdom_core::synth::parse_query(query).unwrap();
                 Outcome::Early(Box::new(move |_wait| {
@@ -750,7 +755,9 @@ mod tests {
                     if asked <= after {
                         return None;
                     }
-                    Some(if over_fips {
+                    Some(if let Some(cap) = capped {
+                        Decided::Capped(cap)
+                    } else if over_fips {
                         Decided::Answer(pubdom_core::synth::build_answer(&q, pubdom_core::Npub::from_bytes([7; 32]), 30).unwrap())
                     } else {
                         Decided::Legacy
@@ -777,20 +784,20 @@ mod tests {
         let query = typed_query_for("www.example.org", 1);
 
         // Never decided: the upstream's answer, TTL capped.
-        let (proxy, replies) = proxy_for(slow_upstream(Duration::ZERO), Released { after: usize::MAX, over_fips: false });
+        let (proxy, replies) = proxy_for(slow_upstream(Duration::ZERO), Released { after: usize::MAX, over_fips: false, capped: None });
         let reply = ask(&proxy, &replies, &query);
         assert_eq!(&reply[reply.len() - 4..], &[217, 26, 48, 101]);
         assert_eq!(ttl(&reply), pubdom_core::OVERRUN_TTL_SECS);
 
         // Decided "not over fips" at once (a cached decision): as the
         // upstream sent it.
-        let (proxy, replies) = proxy_for(slow_upstream(Duration::from_millis(50)), Released { after: 0, over_fips: false });
+        let (proxy, replies) = proxy_for(slow_upstream(Duration::from_millis(50)), Released { after: 0, over_fips: false, capped: None });
         let reply = ask(&proxy, &replies, &query);
         assert_eq!(ttl(&reply), 300);
 
         // Decided "over fips" while the upstream is still thinking: the
         // fips answer, long before the upstream's.
-        let (proxy, replies) = proxy_for(slow_upstream(Duration::from_secs(2)), Released { after: 2, over_fips: true });
+        let (proxy, replies) = proxy_for(slow_upstream(Duration::from_secs(2)), Released { after: 2, over_fips: true, capped: None });
         let started = std::time::Instant::now();
         let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", 28));
         assert!(started.elapsed() < Duration::from_secs(1), "waited for the upstream");
@@ -799,9 +806,15 @@ mod tests {
         // No upstream answers at all: the decision is waited for, and an
         // answer over fips still arrives instead of SERVFAIL.
         let dead = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
-        let (proxy, replies) = proxy_for(dead, Released { after: 40, over_fips: true });
+        let (proxy, replies) = proxy_for(dead, Released { after: 40, over_fips: true, capped: None });
         let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", 28));
         assert_eq!(reply[6..8], [0, 2]);
+
+        // Decided "unavailable" after the release: the legacy answer, TTL
+        // capped at the time to the retry.
+        let (proxy, replies) = proxy_for(slow_upstream(Duration::ZERO), Released { after: 0, over_fips: false, capped: Some(60) });
+        let reply = ask(&proxy, &replies, &query);
+        assert_eq!(ttl(&reply), 60);
     }
 
     /// A name over fips whose servers are unreachable right now: the

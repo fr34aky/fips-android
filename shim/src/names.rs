@@ -93,7 +93,8 @@ pub trait Lookup: Send + Sync {
     /// Whether the legacy answer may be fetched while `lookup` runs. Almost
     /// every name is not over fips and its answer should not wait for us
     /// to find that out; not for a name under a pinned domain, which is
-    /// answered from the pin without the upstream hearing of it.
+    /// answered from the pin while its server is reachable — the upstream
+    /// hears of it only when the server is not, and then after the fact.
     fn prefetch_legacy(&self, _query: &[u8]) -> bool {
         false
     }
@@ -283,7 +284,7 @@ impl Lookup for Names {
             Some(Ok(Ok(LookupResult::Answer(a)))) => Outcome::Answer(a),
             Some(Ok(Ok(LookupResult::Passthrough))) => Outcome::Legacy,
             Some(Ok(Ok(LookupResult::Unavailable { retry_in }))) => {
-                tracing::info!(retry_in_s = retry_in.as_secs(), "public name's server unreachable; legacy answer until the retry");
+                tracing::debug!(retry_in_s = retry_in.as_secs(), "public name's server unreachable; legacy answer until the retry");
                 Outcome::Capped(cap_for(retry_in))
             }
             Some(Ok(Err(e))) => {
