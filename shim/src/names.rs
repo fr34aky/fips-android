@@ -93,15 +93,24 @@ pub trait Lookup: Send + Sync {
     fn lookup(&self, query: &[u8], pending: &dyn Fn()) -> Outcome;
 }
 
-/// What a finished lookup means to the proxy.
-fn settled(result: LookupResult) -> Outcome {
+/// What a finished lookup means to the proxy — the one mapping, whether
+/// the lookup finished in time or after an early release.
+fn decided(result: LookupResult) -> Decided {
     match result {
-        LookupResult::Answer(a) => Outcome::Answer(a),
-        LookupResult::Passthrough => Outcome::Legacy,
+        LookupResult::Answer(a) => Decided::Answer(a),
+        LookupResult::Passthrough => Decided::Legacy,
         LookupResult::Unavailable { retry_in } => {
             tracing::debug!(retry_in_s = retry_in.as_secs(), "public name's server unreachable; legacy answer until the retry");
-            Outcome::Capped(pubdom_core::unavailable_ttl(retry_in))
+            Decided::Capped(pubdom_core::unavailable_ttl(retry_in))
         }
+    }
+}
+
+fn settled(result: LookupResult) -> Outcome {
+    match decided(result) {
+        Decided::Answer(a) => Outcome::Answer(a),
+        Decided::Legacy => Outcome::Legacy,
+        Decided::Capped(cap) => Outcome::Capped(cap),
     }
 }
 
@@ -272,10 +281,8 @@ impl Lookup for Names {
         let Some(rt) = self.rt.as_ref() else {
             return Outcome::Legacy;
         };
-        let resolver = self.resolver.clone();
-        let q = query.to_vec();
         let mut fut = Box::pin({
-            let (resolver, q) = (resolver.clone(), q.clone());
+            let (resolver, q) = (self.resolver.clone(), query.to_vec());
             async move { resolver.lookup(&q).await }
         });
         // One poll first: a cached decision, a name that is no hostname or
@@ -286,7 +293,7 @@ impl Lookup for Names {
         {
             return settled(result);
         }
-        if resolver.txt().probes() && !resolver.has_pin_for(query) {
+        if self.resolver.txt().probes() && !self.resolver.has_pin_for(query) {
             pending();
         }
         // Spawned, not awaited in place: when the budget runs out the app
@@ -304,7 +311,7 @@ impl Lookup for Names {
                 // (only with the plain probe, so only with a validated
                 // Internet — `PhoneTxt`): do not hold the legacy answer
                 // back for the other upstreams.
-                _ = resolver.denied_by_an_upstream(&q), if resolver.txt().probes() => None,
+                _ = self.resolver.denied_by_an_upstream(query), if self.resolver.txt().probes() => None,
             }
         });
         match outcome {
@@ -325,11 +332,7 @@ impl Lookup for Names {
                     let joined = handle.block_on(async { tokio::time::timeout(wait, running).await }).ok()?;
                     task = None;
                     Some(match joined {
-                        Ok(LookupResult::Answer(a)) => Decided::Answer(a),
-                        Ok(LookupResult::Passthrough) => Decided::Legacy,
-                        Ok(LookupResult::Unavailable { retry_in }) => {
-                            Decided::Capped(pubdom_core::unavailable_ttl(retry_in))
-                        }
+                        Ok(result) => decided(result),
                         Err(e) => {
                             tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
                             Decided::Legacy

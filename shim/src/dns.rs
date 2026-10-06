@@ -156,7 +156,6 @@ impl DnsProxy {
                 // over fips must not fail for a slow lookup.
                 pubdom_core::synth::clamp_ttls(&legacy, cap).unwrap_or(legacy)
             };
-            let clamp = |legacy: Vec<u8>| clamp_to(legacy, pubdom_core::OVERRUN_TTL_SECS);
             let forward = |prefetched: Option<std::sync::mpsc::Receiver<Option<Vec<u8>>>>| match prefetched {
                 // A dead fetching thread must not cost the answer.
                 Some(rx) => rx.recv().unwrap_or_else(|_| self.forward_upstreams(query.payload)),
@@ -171,7 +170,14 @@ impl DnsProxy {
                     Some(a)
                 }
                 Some(Outcome::Capped(cap)) => {
-                    tracing::info!(qname = %qname, qtype = qtype_of(query.payload), cap, "public name not settled; legacy answer, TTL capped");
+                    // Two cases, told apart by the cap: the overrun TTL
+                    // while the lookup is still deciding, longer when the
+                    // name is over fips but its server is unreachable.
+                    if cap == pubdom_core::OVERRUN_TTL_SECS {
+                        tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name still deciding; legacy answer for a few seconds");
+                    } else {
+                        tracing::info!(qname = %qname, qtype = qtype_of(query.payload), cap, "public name's server unreachable; legacy answer until the retry");
+                    }
                     forward(prefetched).map(|legacy| clamp_to(legacy, cap))
                 }
                 Some(Outcome::Early(mut decided)) => {
@@ -213,14 +219,14 @@ impl DnsProxy {
                         }
                         Some(Decided::Legacy) => legacy.unwrap_or_else(|| forward(prefetched)),
                         Some(Decided::Capped(cap)) => {
-                            tracing::info!(qname = %qname, qtype = qtype_of(query.payload), cap, "public name unavailable over fips; legacy answer until the retry");
+                            tracing::info!(qname = %qname, qtype = qtype_of(query.payload), cap, "public name's server unreachable; legacy answer until the retry");
                             legacy
                                 .unwrap_or_else(|| forward(prefetched))
                                 .map(|l| clamp_to(l, cap))
                         }
                         None => {
                             tracing::debug!(qname = %qname, "public name released on an upstream's denial; legacy answer for a few seconds");
-                            legacy.flatten().map(clamp)
+                            legacy.flatten().map(|l| clamp_to(l, pubdom_core::OVERRUN_TTL_SECS))
                         }
                     }
                 }
@@ -844,6 +850,62 @@ mod tests {
         let n = reply.len();
         assert_eq!(&reply[n - 4..], &[217, 26, 48, 101], "the upstream's address");
         assert_eq!(u32::from_be_bytes(reply[n - 10..n - 6].try_into().unwrap()), 20);
+    }
+
+    /// The legacy fetch is started by the lookup, or not at all: a lookup
+    /// that asks for it and ends `Capped` gets the prefetched reply (one
+    /// upstream query, not two); one that settles without asking leaves
+    /// the upstream to the proxy afterwards (one query, no thread).
+    #[test]
+    fn the_lookup_decides_whether_the_legacy_answer_is_prefetched() {
+        use crate::names::Outcome;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Asks(bool);
+        impl crate::names::Lookup for Asks {
+            fn lookup(&self, _: &[u8], pending: &dyn Fn()) -> Outcome {
+                if self.0 {
+                    pending();
+                    Outcome::Capped(pubdom_core::OVERRUN_TTL_SECS)
+                } else {
+                    Outcome::Legacy
+                }
+            }
+        }
+        // An upstream that counts its questions.
+        let upstream = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr = upstream.local_addr().unwrap();
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counter = asked.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = upstream.recv_from(&mut buf) {
+                counter.fetch_add(1, Ordering::SeqCst);
+                let mut reply = buf[..n].to_vec();
+                reply[2] |= 0x80;
+                reply[6..8].copy_from_slice(&[0, 1]);
+                reply.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1]);
+                reply.extend_from_slice(&300u32.to_be_bytes());
+                reply.extend_from_slice(&[0, 4, 217, 26, 48, 101]);
+                let _ = upstream.send_to(&reply, from);
+            }
+        });
+        for (asks, expect_ttl) in [(true, pubdom_core::OVERRUN_TTL_SECS), (false, 300)] {
+            let (writer_tx, replies) = std::sync::mpsc::channel();
+            let proxy = Arc::new(DnsProxy {
+                local_responder: "[::1]:1".parse().unwrap(),
+                upstreams: vec![addr],
+                writer_tx,
+                protect: None,
+                hosts: None,
+                names: Some(Arc::new(Asks(asks))),
+            });
+            let before = asked.load(Ordering::SeqCst);
+            let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", 1));
+            let n = reply.len();
+            assert_eq!(u32::from_be_bytes(reply[n - 10..n - 6].try_into().unwrap()), expect_ttl);
+            std::thread::sleep(Duration::from_millis(100));
+            assert_eq!(asked.load(Ordering::SeqCst) - before, 1, "one upstream query, asks={asks}");
+        }
     }
 
     /// A reply that does not parse must become SERVFAIL, not a panic.
