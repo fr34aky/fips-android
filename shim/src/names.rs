@@ -14,10 +14,10 @@
 //! 3 to the domain's server over the mesh, and a synthesized answer with the
 //! node's `fd…` address. Everything else is [`Outcome::Legacy`], and the
 //! proxy forwards to the upstreams exactly as before — or
-//! [`Outcome::Pending`] when the lookup overran its budget and is still
-//! deciding, which forwards too but with the answer's TTLs capped,
-//! [`Outcome::Capped`] when the name is over fips but nobody is reachable
-//! right now (the cap lasts until the next attempt), or
+//! [`Outcome::Capped`] when the lookup overran its budget and is still
+//! deciding, or the name is over fips but nobody is reachable right now —
+//! which forwards too but with the answer's TTLs capped (5 s, or until
+//! the next attempt) — or
 //! [`Outcome::Early`] when one upstream has already denied the record and
 //! the legacy answer need not wait for the rest. A name that is not over
 //! fips is never made unreachable by this code.
@@ -48,19 +48,16 @@ pub enum Outcome {
     Answer(Vec<u8>),
     /// Not over fips: the upstreams' answer, unchanged.
     Legacy,
-    /// Still deciding (the lookup overran its budget and carries on): the
-    /// upstreams' answer, but with its TTLs capped at
-    /// `pubdom_core::OVERRUN_TTL_SECS` so the application's resolver asks
-    /// again about when the decision is in. Android kept a parked
-    /// wildcard's address for its 300 s otherwise, and the cached decision
-    /// was never asked for.
-    Pending,
-    /// Over fips, but no server or target node reachable right now
-    /// (`LookupResult::Unavailable`): the upstreams' answer with its TTLs
-    /// capped at this many seconds — when a server or node is asked
-    /// again — so the application asks again by then. A node that just
-    /// connected sees this on its first lookup, before its session to the
-    /// server is up.
+    /// The upstreams' answer with its TTLs capped at this many seconds,
+    /// so the application's resolver asks again by then instead of keeping
+    /// the legacy address for the record's own TTL (Android kept a parked
+    /// wildcard's 300 s, and the cached decision was never asked for).
+    /// Two cases: the lookup overran its budget and is still deciding
+    /// (`pubdom_core::OVERRUN_TTL_SECS`), or the name is over fips but no
+    /// server or target node is reachable right now
+    /// (`LookupResult::Unavailable`, the cap being the time to the next
+    /// attempt — a node that just connected sees this on its first lookup,
+    /// before its session to the server is up).
     Capped(u32),
     /// Still deciding, but one upstream has already said that no domain
     /// this name could belong to has a record: the upstreams' answer goes
@@ -68,7 +65,7 @@ pub enum Outcome {
     /// closure waits up to the given time for the decision — asked while
     /// and after the legacy answer is fetched, it turns this into `Answer`
     /// or `Legacy` after all; while it returns `None` the answer goes out
-    /// short-lived, as for `Pending`. (A decision that was cached also
+    /// short-lived, as `Capped`. (A decision that was cached also
     /// arrives this way, and is in at the first ask.)
     Early(Box<dyn FnMut(Duration) -> Option<Decided> + Send>),
 }
@@ -81,22 +78,30 @@ pub enum Decided {
     Capped(u32),
 }
 
-/// The TTL cap for an unavailable name: until the next attempt, at least
-/// the overrun TTL.
-fn cap_for(retry_in: Duration) -> u32 {
-    u32::try_from(retry_in.as_secs()).unwrap_or(u32::MAX).max(pubdom_core::OVERRUN_TTL_SECS)
-}
 
 pub trait Lookup: Send + Sync {
-    fn lookup(&self, query: &[u8]) -> Outcome;
+    /// Resolve `query`. `pending` is called, at most once, when the lookup
+    /// did not settle at its first poll and the legacy answer may be
+    /// fetched alongside it: almost every name is not over fips and its
+    /// answer should not wait for us to find that out. It is not called
+    /// for a name under a pinned domain (answered from the pin while its
+    /// server is reachable; the upstream hears of it only when the server
+    /// is not, and then after the fact), nor where no early release can
+    /// follow, nor when the lookup settled at once — a cached decision, a
+    /// record type never over fips — where the answer is back before the
+    /// upstream would be.
+    fn lookup(&self, query: &[u8], pending: &dyn Fn()) -> Outcome;
+}
 
-    /// Whether the legacy answer may be fetched while `lookup` runs. Almost
-    /// every name is not over fips and its answer should not wait for us
-    /// to find that out; not for a name under a pinned domain, which is
-    /// answered from the pin while its server is reachable — the upstream
-    /// hears of it only when the server is not, and then after the fact.
-    fn prefetch_legacy(&self, _query: &[u8]) -> bool {
-        false
+/// What a finished lookup means to the proxy.
+fn settled(result: LookupResult) -> Outcome {
+    match result {
+        LookupResult::Answer(a) => Outcome::Answer(a),
+        LookupResult::Passthrough => Outcome::Legacy,
+        LookupResult::Unavailable { retry_in } => {
+            tracing::debug!(retry_in_s = retry_in.as_secs(), "public name's server unreachable; legacy answer until the retry");
+            Outcome::Capped(pubdom_core::unavailable_ttl(retry_in))
+        }
     }
 }
 
@@ -238,9 +243,19 @@ impl PhoneTxt {
     }
 }
 
+// Every method forwarded: a wrapper that forwards `lookup` alone loses the
+// library's early release without a compiler word about it.
 impl TxtSource for PhoneTxt {
     async fn lookup(&self, domain: &str) -> (pubdom_core::policy::TxtLookup, Option<u32>) {
         self.0.lookup(domain).await
+    }
+
+    async fn lookup_with(
+        &self,
+        domain: &str,
+        first_denial: &(dyn Fn() + Sync),
+    ) -> (pubdom_core::policy::TxtLookup, Option<u32>) {
+        self.0.lookup_with(domain, first_denial).await
     }
 
     async fn probe(&self, domain: &str, first_denial: &(dyn Fn() + Sync)) -> Probe {
@@ -253,23 +268,35 @@ impl TxtSource for PhoneTxt {
 }
 
 impl Lookup for Names {
-    fn lookup(&self, query: &[u8]) -> Outcome {
+    fn lookup(&self, query: &[u8], pending: &dyn Fn()) -> Outcome {
         let Some(rt) = self.rt.as_ref() else {
             return Outcome::Legacy;
         };
         let resolver = self.resolver.clone();
         let q = query.to_vec();
+        let mut fut = Box::pin({
+            let (resolver, q) = (resolver.clone(), q.clone());
+            async move { resolver.lookup(&q).await }
+        });
+        // One poll first: a cached decision, a name that is no hostname or
+        // a record type never over fips settle here, with no task and no
+        // upstream asked ahead of them.
+        if let Ok(result) =
+            rt.block_on(async { tokio::time::timeout(Duration::ZERO, &mut fut).await })
+        {
+            return settled(result);
+        }
+        if resolver.txt().probes() && !resolver.has_pin_for(query) {
+            pending();
+        }
         // Spawned, not awaited in place: when the budget runs out the app
-        // gets the legacy answer (short-lived, see `Outcome::Pending`), but
+        // gets the legacy answer (short-lived, see `Outcome::Capped`), but
         // the lookup carries on and caches its decision — so the query the
         // resolver makes after that is answered at once. Cancelling it
         // instead meant a slow path (offline: TXT timeout, then a mesh
         // relay) never finished, however often it was asked.
-        let mut task = rt.spawn({
-            let (resolver, q) = (resolver.clone(), q.clone());
-            async move { resolver.lookup(&q).await }
-        });
-        let settled = rt.block_on(async {
+        let mut task = rt.spawn(fut);
+        let outcome = rt.block_on(async {
             tokio::select! {
                 biased;
                 joined = tokio::time::timeout(BUDGET, &mut task) => Some(joined),
@@ -280,20 +307,15 @@ impl Lookup for Names {
                 _ = resolver.denied_by_an_upstream(&q), if resolver.txt().probes() => None,
             }
         });
-        match settled {
-            Some(Ok(Ok(LookupResult::Answer(a)))) => Outcome::Answer(a),
-            Some(Ok(Ok(LookupResult::Passthrough))) => Outcome::Legacy,
-            Some(Ok(Ok(LookupResult::Unavailable { retry_in }))) => {
-                tracing::debug!(retry_in_s = retry_in.as_secs(), "public name's server unreachable; legacy answer until the retry");
-                Outcome::Capped(cap_for(retry_in))
-            }
+        match outcome {
+            Some(Ok(Ok(result))) => settled(result),
             Some(Ok(Err(e))) => {
                 tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
                 Outcome::Legacy
             }
             Some(Err(_)) => {
                 tracing::info!("public-name lookup still running after its budget; using the legacy answer briefly");
-                Outcome::Pending
+                Outcome::Capped(pubdom_core::OVERRUN_TTL_SECS)
             }
             None => {
                 let handle = rt.handle().clone();
@@ -305,7 +327,9 @@ impl Lookup for Names {
                     Some(match joined {
                         Ok(LookupResult::Answer(a)) => Decided::Answer(a),
                         Ok(LookupResult::Passthrough) => Decided::Legacy,
-                        Ok(LookupResult::Unavailable { retry_in }) => Decided::Capped(cap_for(retry_in)),
+                        Ok(LookupResult::Unavailable { retry_in }) => {
+                            Decided::Capped(pubdom_core::unavailable_ttl(retry_in))
+                        }
                         Err(e) => {
                             tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
                             Decided::Legacy
@@ -314,14 +338,6 @@ impl Lookup for Names {
                 }))
             }
         }
-    }
-
-    fn prefetch_legacy(&self, query: &[u8]) -> bool {
-        // Only where an early release can follow: without the plain probe
-        // (no validated Internet) the answer waits for the decision
-        // anyway, and whatever still answers DNS there need not be asked
-        // ahead of it.
-        self.resolver.txt().probes() && !self.resolver.has_pin_for(query)
     }
 }
 

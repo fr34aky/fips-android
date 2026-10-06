@@ -56,8 +56,8 @@ pub struct DnsProxy {
     /// Public domain names over fips (`names.rs`), `None` when off. Asked
     /// before the upstreams for every non-`.fips` name; `Legacy` from it
     /// means "not over fips" and the query goes upstream unchanged,
-    /// `Pending` that it goes upstream but the answer's TTLs are capped
-    /// while the lookup is still deciding.
+    /// `Capped(n)` that it goes upstream but with the answer's TTLs capped
+    /// at `n` seconds (the lookup still deciding, or a server unreachable).
     pub names: Option<Arc<dyn crate::names::Lookup>>,
 }
 
@@ -128,20 +128,27 @@ impl DnsProxy {
             resp
         } else {
             use crate::names::{Decided, Outcome};
-            // The legacy answer, fetched while the lookup decides where the
-            // resolver allows it, so a name not over fips does not pay for
-            // the decision and the upstream one after the other.
-            let prefetched = self.names.as_ref().filter(|n| n.prefetch_legacy(query.payload)).and_then(|_| {
-                let (tx, rx) = std::sync::mpsc::channel();
-                let (proxy, q) = (self.clone(), query.payload.to_vec());
-                std::thread::Builder::new()
-                    .name("fips-dns-legacy".into())
-                    .spawn(move || {
-                        let _ = tx.send(proxy.forward_upstreams(&q));
-                    })
-                    .ok()
-                    .map(|_| rx)
-            });
+            // The legacy answer, fetched while the lookup decides — started
+            // by the lookup itself, once it knows it will not settle at
+            // once and the resolver allows it — so a name not over fips
+            // does not pay for the decision and the upstream one after the
+            // other.
+            let slot: std::sync::OnceLock<std::sync::mpsc::Receiver<Option<Vec<u8>>>> =
+                std::sync::OnceLock::new();
+            let start_prefetch = || {
+                slot.get_or_init(|| {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let (proxy, q) = (self.clone(), query.payload.to_vec());
+                    // A thread that cannot be spawned drops `tx` with its
+                    // closure: a disconnected channel, asked inline instead.
+                    let _ = std::thread::Builder::new()
+                        .name("fips-dns-legacy".into())
+                        .spawn(move || {
+                            let _ = tx.send(proxy.forward_upstreams(&q));
+                        });
+                    rx
+                });
+            };
             let clamp_to = |legacy: Vec<u8>, cap: u32| {
                 // A reply the clamp cannot parse (truncated above
                 // MAX_RESPONSE, malformed) goes out as it came: the
@@ -155,18 +162,16 @@ impl DnsProxy {
                 Some(rx) => rx.recv().unwrap_or_else(|_| self.forward_upstreams(query.payload)),
                 None => self.forward_upstreams(query.payload),
             };
-            match self.names.as_ref().map(|n| n.lookup(query.payload)) {
+            let outcome = self.names.as_ref().map(|n| n.lookup(query.payload, &start_prefetch));
+            let prefetched = slot.into_inner();
+            match outcome {
                 Some(Outcome::Answer(a)) => {
                     // Rare and load-bearing, like `.fips`: say so at info.
                     tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name answered over fips");
                     Some(a)
                 }
-                Some(Outcome::Pending) => {
-                    tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name still deciding; legacy answer for a few seconds");
-                    forward(prefetched).map(clamp)
-                }
                 Some(Outcome::Capped(cap)) => {
-                    tracing::info!(qname = %qname, qtype = qtype_of(query.payload), cap, "public name unavailable over fips; legacy answer until the retry");
+                    tracing::info!(qname = %qname, qtype = qtype_of(query.payload), cap, "public name not settled; legacy answer, TTL capped");
                     forward(prefetched).map(|legacy| clamp_to(legacy, cap))
                 }
                 Some(Outcome::Early(mut decided)) => {
@@ -619,7 +624,7 @@ mod tests {
         use crate::names::Outcome;
         struct Bound;
         impl crate::names::Lookup for Bound {
-            fn lookup(&self, query: &[u8]) -> Outcome {
+            fn lookup(&self, query: &[u8], _: &dyn Fn()) -> Outcome {
                 let Some(q) = pubdom_core::synth::parse_query(query) else {
                     return Outcome::Legacy;
                 };
@@ -672,8 +677,8 @@ mod tests {
         use crate::names::Outcome;
         struct Slow;
         impl crate::names::Lookup for Slow {
-            fn lookup(&self, _: &[u8]) -> Outcome {
-                Outcome::Pending
+            fn lookup(&self, _: &[u8], _: &dyn Fn()) -> Outcome {
+                Outcome::Capped(pubdom_core::OVERRUN_TTL_SECS)
             }
         }
         // An upstream answering every question with one A record, TTL 300.
@@ -746,7 +751,8 @@ mod tests {
             capped: Option<u32>,
         }
         impl crate::names::Lookup for Released {
-            fn lookup(&self, query: &[u8]) -> Outcome {
+            fn lookup(&self, query: &[u8], pending: &dyn Fn()) -> Outcome {
+                pending();
                 let (after, over_fips, capped) = (self.after, self.over_fips, self.capped);
                 let mut asked = 0;
                 let q = pubdom_core::synth::parse_query(query).unwrap();
@@ -763,9 +769,6 @@ mod tests {
                         Decided::Legacy
                     })
                 }))
-            }
-            fn prefetch_legacy(&self, _: &[u8]) -> bool {
-                true
             }
         }
         let proxy_for = |upstream: SocketAddr, names: Released| {
@@ -824,7 +827,7 @@ mod tests {
         use crate::names::Outcome;
         struct Unavailable;
         impl crate::names::Lookup for Unavailable {
-            fn lookup(&self, _: &[u8]) -> Outcome {
+            fn lookup(&self, _: &[u8], _: &dyn Fn()) -> Outcome {
                 Outcome::Capped(20)
             }
         }
