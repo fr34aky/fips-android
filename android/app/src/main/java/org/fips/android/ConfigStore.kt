@@ -1,6 +1,7 @@
 package org.fips.android
 
 import android.content.Context
+import androidx.appcompat.app.AppCompatDelegate
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -135,6 +136,7 @@ object ConfigStore {
     const val DEF_WORKER_THREADS = 1
     const val DEF_LOG_LEVEL = "info"
     const val DEF_THEME = "dark"
+    /** The dropdown's entries too (`SettingsFragment.load`): one list. */
     val THEMES = listOf("dark", "light", "system")
     const val DEF_BOOTSTRAP_FALLBACKS = true
     const val DEF_NOSTR_DISCOVERY = false
@@ -453,11 +455,11 @@ object ConfigStore {
      * a change, which recreates the visible activity.
      */
     fun applyTheme(context: Context) {
-        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+        AppCompatDelegate.setDefaultNightMode(
             when (theme(context)) {
-                "light" -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
-                "system" -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
-                else -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+                "light" -> AppCompatDelegate.MODE_NIGHT_NO
+                "system" -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+                else -> AppCompatDelegate.MODE_NIGHT_YES
             }
         )
     }

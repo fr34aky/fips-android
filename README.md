@@ -15,9 +15,10 @@ tunnel with a userspace forwarder).
 |---|---|
 | ![Overview in the light theme](docs/screenshots/overview-light.png) | ![Add and remove Nostr relays](docs/screenshots/relays.png) |
 
-<sub>Captured on a Pixel 9 Pro joined to the live public mesh. The app is
-dark by default; Settings → Appearance switches to light or to following
-the system.</sub>
+<sub>Captured on a Pixel 9 Pro joined to the live public mesh, with the
+maintainer's own names, peers and app list blanked. The app is dark by
+default; Settings → Appearance switches to light or to following the
+system.</sub>
 
 ## Features
 
@@ -342,7 +343,7 @@ fips = { path = "../fips" }   # your local fips checkout on android-hooks
 - Public domain names are device-verified with a real bound domain: online
   (first-visit discovery and pinning), offline from a pin, offline from the
   claim's DNSSEC proof through a mesh relay, and offline through witnesses'
-  attestations (fips-pub-domains' `docs/testing.md`, levels 5–5c).
+  attestations (fips-pub-domains' `docs/testing.md`, levels 5, 5b and 5c).
 - Signed per-ABI releases are published on GitHub Releases and on
   [Zapstore](https://zapstore.dev), and the app can update itself: *Check for updates* (Diagnostics) downloads the ABI-matching
   APK, verifies it against the release's sha256, and hands it to the system

@@ -94,8 +94,14 @@ class SettingsFragment : Fragment() {
             HotspotLocation.explain(requireContext(), onContinue = { ensureLocationPermission() })
         }
         view.findViewById<View>(R.id.save).setOnClickListener {
-            save(view)
-            Ui.snack(view, savedMessage())
+            if (save(view)) {
+                // The theme changed: the activity is recreated in the new
+                // colours, which is the confirmation (a snackbar would die
+                // with it).
+                CS.applyTheme(requireContext())
+            } else {
+                Ui.snack(view, savedMessage())
+            }
             syncSaveButton(view)
         }
         watchForEdits(view)
@@ -127,9 +133,15 @@ class SettingsFragment : Fragment() {
             .setTitle("Unsaved settings")
             .setMessage("Edits only take effect once saved (and applied on the next connect).")
             .setPositiveButton("Save") { _, _ ->
-                save(v)
-                Ui.snack(v, savedMessage())
+                val theme = save(v)
+                if (!theme) Ui.snack(v, savedMessage())
                 proceed()
+                // After leaving: a recreate racing a finish() would relaunch
+                // a closing activity. When the activity stays, it is rebuilt
+                // in the new colours; when it closes, the next start has them.
+                if (theme && !requireActivity().isFinishing) {
+                    CS.applyTheme(requireContext())
+                }
             }
             .setNegativeButton("Discard") { _, _ ->
                 load(v)
@@ -415,10 +427,12 @@ class SettingsFragment : Fragment() {
         edit(view, R.id.worker_threads)
             .setText(p.getInt(CS.WORKER_THREADS, CS.DEF_WORKER_THREADS).toString())
         drop(view, R.id.log_level).setText(p.getString(CS.LOG_LEVEL, CS.DEF_LOG_LEVEL), false)
+        drop(view, R.id.theme).setSimpleItems(CS.THEMES.toTypedArray())
         drop(view, R.id.theme).setText(CS.theme(requireContext()), false)
     }
 
-    private fun save(view: View) {
+    /** Persists every field; `true` when the theme changed, which the caller applies. */
+    private fun save(view: View): Boolean {
         val workers = edit(view, R.id.worker_threads).text.toString().trim().toIntOrNull()
             ?: CS.DEF_WORKER_THREADS
         val theme = CS.theme(requireContext())
@@ -461,11 +475,7 @@ class SettingsFragment : Fragment() {
                 edit(view, R.id.theme).text.toString().trim().ifEmpty { CS.DEF_THEME }
             )
             .apply()
-        if (theme != CS.theme(requireContext())) {
-            // Recreates the activity; the snackbar below is lost with it,
-            // and the new colours are the confirmation.
-            CS.applyTheme(requireContext())
-        }
+        return theme != CS.theme(requireContext())
     }
 
     private companion object {
