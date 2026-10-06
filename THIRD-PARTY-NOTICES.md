@@ -15,9 +15,9 @@ which adds the embedder hooks under the same license).
 
 ## fips-pub-domains
 
-[fips-pub-domains](https://github.com/fr34aky/fips-pub-domains) v0.2.4
-(`pubdom-core`, `pubdom-resolve`; git dependency at rev a4bb0fc, the
-commit tagged v0.2.4) — MIT
+[fips-pub-domains](https://github.com/fr34aky/fips-pub-domains) v0.2.4 plus
+unreleased changes (`pubdom-core`, `pubdom-resolve`; git dependency at rev
+62d8cc3, eleven commits past the v0.2.4 tag) — MIT
 License, Copyright (c) fr34aky. Public domain names over fips: the
 verification policy and the resolver this app's DNS proxy runs.
 

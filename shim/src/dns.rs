@@ -142,13 +142,14 @@ impl DnsProxy {
                     .ok()
                     .map(|_| rx)
             });
-            let clamp = |legacy: Vec<u8>| {
+            let clamp_to = |legacy: Vec<u8>, cap: u32| {
                 // A reply the clamp cannot parse (truncated above
                 // MAX_RESPONSE, malformed) goes out as it came: the
                 // app's resolver may still use it, and a name not
                 // over fips must not fail for a slow lookup.
-                pubdom_core::synth::clamp_ttls(&legacy, pubdom_core::OVERRUN_TTL_SECS).unwrap_or(legacy)
+                pubdom_core::synth::clamp_ttls(&legacy, cap).unwrap_or(legacy)
             };
+            let clamp = |legacy: Vec<u8>| clamp_to(legacy, pubdom_core::OVERRUN_TTL_SECS);
             let forward = |prefetched: Option<std::sync::mpsc::Receiver<Option<Vec<u8>>>>| match prefetched {
                 // A dead fetching thread must not cost the answer.
                 Some(rx) => rx.recv().unwrap_or_else(|_| self.forward_upstreams(query.payload)),
@@ -163,6 +164,10 @@ impl DnsProxy {
                 Some(Outcome::Pending) => {
                     tracing::info!(qname = %qname, qtype = qtype_of(query.payload), "public name still deciding; legacy answer for a few seconds");
                     forward(prefetched).map(clamp)
+                }
+                Some(Outcome::Capped(cap)) => {
+                    tracing::info!(qname = %qname, qtype = qtype_of(query.payload), cap, "public name unavailable over fips; legacy answer until the retry");
+                    forward(prefetched).map(|legacy| clamp_to(legacy, cap))
                 }
                 Some(Outcome::Early(mut decided)) => {
                     // Wait for the legacy answer and the decision at once.
@@ -202,6 +207,9 @@ impl DnsProxy {
                             Some(a)
                         }
                         Some(Decided::Legacy) => legacy.unwrap_or_else(|| forward(prefetched)),
+                        Some(Decided::Capped(cap)) => legacy
+                            .unwrap_or_else(|| forward(prefetched))
+                            .map(|l| clamp_to(l, cap)),
                         None => {
                             tracing::debug!(qname = %qname, "public name released on an upstream's denial; legacy answer for a few seconds");
                             legacy.flatten().map(clamp)
@@ -794,6 +802,32 @@ mod tests {
         let (proxy, replies) = proxy_for(dead, Released { after: 40, over_fips: true });
         let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", 28));
         assert_eq!(reply[6..8], [0, 2]);
+    }
+
+    /// A name over fips whose servers are unreachable right now: the
+    /// legacy answer, with its TTLs capped at the time to the next attempt.
+    #[test]
+    fn an_unavailable_public_name_gets_the_legacy_answer_until_the_retry() {
+        use crate::names::Outcome;
+        struct Unavailable;
+        impl crate::names::Lookup for Unavailable {
+            fn lookup(&self, _: &[u8]) -> Outcome {
+                Outcome::Capped(20)
+            }
+        }
+        let (writer_tx, replies) = std::sync::mpsc::channel();
+        let proxy = Arc::new(DnsProxy {
+            local_responder: "[::1]:1".parse().unwrap(),
+            upstreams: vec![slow_upstream(Duration::ZERO)],
+            writer_tx,
+            protect: None,
+            hosts: None,
+            names: Some(Arc::new(Unavailable)),
+        });
+        let reply = ask(&proxy, &replies, &typed_query_for("www.example.org", 1));
+        let n = reply.len();
+        assert_eq!(&reply[n - 4..], &[217, 26, 48, 101], "the upstream's address");
+        assert_eq!(u32::from_be_bytes(reply[n - 10..n - 6].try_into().unwrap()), 20);
     }
 
     /// A reply that does not parse must become SERVFAIL, not a panic.

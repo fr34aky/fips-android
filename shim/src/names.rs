@@ -15,7 +15,9 @@
 //! node's `fd…` address. Everything else is [`Outcome::Legacy`], and the
 //! proxy forwards to the upstreams exactly as before — or
 //! [`Outcome::Pending`] when the lookup overran its budget and is still
-//! deciding, which forwards too but with the answer's TTLs capped, or
+//! deciding, which forwards too but with the answer's TTLs capped,
+//! [`Outcome::Capped`] when the name is over fips but nobody is reachable
+//! right now (the cap lasts until the next attempt), or
 //! [`Outcome::Early`] when one upstream has already denied the record and
 //! the legacy answer need not wait for the rest. A name that is not over
 //! fips is never made unreachable by this code.
@@ -53,6 +55,13 @@ pub enum Outcome {
     /// wildcard's address for its 300 s otherwise, and the cached decision
     /// was never asked for.
     Pending,
+    /// Over fips, but no server or target node reachable right now
+    /// (`LookupResult::Unavailable`): the upstreams' answer with its TTLs
+    /// capped at this many seconds — when a server or node is asked
+    /// again — so the application asks again by then. A node that just
+    /// connected sees this on its first lookup, before its session to the
+    /// server is up.
+    Capped(u32),
     /// Still deciding, but one upstream has already said that no domain
     /// this name could belong to has a record: the upstreams' answer goes
     /// out now instead of after the slowest upstream has agreed. The
@@ -68,6 +77,14 @@ pub enum Outcome {
 pub enum Decided {
     Answer(Vec<u8>),
     Legacy,
+    /// As [`Outcome::Capped`].
+    Capped(u32),
+}
+
+/// The TTL cap for an unavailable name: until the next attempt, at least
+/// the overrun TTL.
+fn cap_for(retry_in: Duration) -> u32 {
+    u32::try_from(retry_in.as_secs()).unwrap_or(u32::MAX).max(pubdom_core::OVERRUN_TTL_SECS)
 }
 
 pub trait Lookup: Send + Sync {
@@ -265,6 +282,10 @@ impl Lookup for Names {
         match settled {
             Some(Ok(Ok(LookupResult::Answer(a)))) => Outcome::Answer(a),
             Some(Ok(Ok(LookupResult::Passthrough))) => Outcome::Legacy,
+            Some(Ok(Ok(LookupResult::Unavailable { retry_in }))) => {
+                tracing::info!(retry_in_s = retry_in.as_secs(), "public name's server unreachable; legacy answer until the retry");
+                Outcome::Capped(cap_for(retry_in))
+            }
             Some(Ok(Err(e))) => {
                 tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
                 Outcome::Legacy
@@ -283,6 +304,7 @@ impl Lookup for Names {
                     Some(match joined {
                         Ok(LookupResult::Answer(a)) => Decided::Answer(a),
                         Ok(LookupResult::Passthrough) => Decided::Legacy,
+                        Ok(LookupResult::Unavailable { retry_in }) => Decided::Capped(cap_for(retry_in)),
                         Err(e) => {
                             tracing::warn!(error = %e, "public-name lookup failed; using the legacy answer");
                             Decided::Legacy
