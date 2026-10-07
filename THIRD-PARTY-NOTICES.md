@@ -15,11 +15,11 @@ which adds the embedder hooks under the same license).
 
 ## fips-pub-domains
 
-[fips-pub-domains](https://github.com/fr34aky/fips-pub-domains) v0.2.5
-plus unreleased changes (`pubdom-core`, `pubdom-resolve`; git dependency
-at rev 933c9a0, five commits past the v0.2.5 tag) — MIT License,
-Copyright (c) fr34aky. Public domain names over fips: the verification
-policy and the resolver this app's DNS proxy runs.
+[fips-pub-domains](https://github.com/fr34aky/fips-pub-domains) v0.2.6
+(`pubdom-core`, `pubdom-resolve`; git dependency at rev f95f179, the
+commit tagged v0.2.6) — MIT License, Copyright (c) fr34aky. Public
+domain names over fips: the verification policy and the resolver this
+app's DNS proxy runs.
 
 ## Android app dependencies
 
@@ -105,7 +105,6 @@ crates.io per MPL §3.2(b).
 | errno | 0.3.14 | MIT OR Apache-2.0 |
 | etherparse | 0.20.3 | MIT OR Apache-2.0 |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT |
-| fips-android-shim | 0.1.0 | MIT |
 | flume | 0.12.0 | Apache-2.0/MIT |
 | foldhash | 0.2.0 | Zlib |
 | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 |
